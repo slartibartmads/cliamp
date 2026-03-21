@@ -463,27 +463,13 @@ func (m Model) renderPlaylist() string {
 		scroll = max(0, len(tracks)-1)
 	}
 
-	// plVisible is the number of rendered lines available (tracks + album
-	// separators combined). The loop below counts every appended line
-	// against this budget so the playlist never overflows its area.
+	// plVisible is the number of rendered lines available for tracks.
+	// The loop below counts every appended line against this budget
+	// so the playlist never overflows its area.
 	budget := m.plVisible
 
-	lines := make([]string, 0, budget) // tracks + separators
-	prevAlbum := ""
-	if scroll > 0 {
-		prevAlbum = tracks[scroll-1].Album
-	}
+	lines := make([]string, 0, budget) // tracks
 	for i := scroll; i < len(tracks) && len(lines) < budget; i++ {
-		// Insert album separator when album changes
-		if album := tracks[i].Album; album != "" && album != prevAlbum {
-			// Need room for separator + track line (2 lines).
-			if len(lines)+2 > budget {
-				break
-			}
-			lines = append(lines, albumSeparator(album, tracks[i].Year))
-		}
-		prevAlbum = tracks[i].Album
-
 		prefix := "  "
 		style := playlistItemStyle
 
@@ -501,13 +487,20 @@ func (m Model) renderPlaylist() string {
 		if qp := m.playlist.QueuePosition(i); qp > 0 {
 			queueSuffix = fmt.Sprintf(" [Q%d]", qp)
 		}
-		name = truncate(name, panelWidth-6-utf8.RuneCountInString(queueSuffix))
+		albumSuffix := ""
+		if album := tracks[i].Album; album != "" {
+			albumSuffix = " · " + album
+		}
+		suffixLen := utf8.RuneCountInString(queueSuffix) + utf8.RuneCountInString(albumSuffix)
+		name = truncate(name, panelWidth-6-suffixLen)
 
 		line := fmt.Sprintf("%s%d. %s", prefix, i+1, name)
+		line = style.Render(line)
+		if albumSuffix != "" {
+			line += dimStyle.Render(albumSuffix)
+		}
 		if queueSuffix != "" {
-			line = style.Render(line) + activeToggle.Render(queueSuffix)
-		} else {
-			line = style.Render(line)
+			line += activeToggle.Render(queueSuffix)
 		}
 		lines = append(lines, line)
 	}
