@@ -259,6 +259,9 @@ func (m Model) renderFullVisualizer() string {
 }
 
 func (m Model) renderSeekBar() string {
+	if panelWidth <= 0 {
+		return ""
+	}
 	// During buffering, show a dim bar — avoids speaker.Lock() contention.
 	if m.buffering {
 		return seekDimStyle.Render(strings.Repeat("━", panelWidth))
@@ -267,6 +270,9 @@ func (m Model) renderSeekBar() string {
 	if !m.player.Seekable() && m.player.IsPlaying() && m.cachedDur == 0 {
 		label := " STREAMING "
 		pad := panelWidth - lipgloss.Width(label)
+		if pad < 0 {
+			return seekFillStyle.Render(label[:panelWidth])
+		}
 		left := pad / 2
 		right := pad - left
 		return seekFillStyle.Render(strings.Repeat("━", left) + label + strings.Repeat("━", right))
@@ -281,7 +287,7 @@ func (m Model) renderSeekBar() string {
 	}
 	progress = max(0, min(1, progress))
 
-	filled := int(progress * float64(panelWidth-1))
+	filled := int(progress * float64(max(1, panelWidth-1)))
 
 	return seekFillStyle.Render(strings.Repeat("━", filled)) +
 		seekFillStyle.Render("●") +

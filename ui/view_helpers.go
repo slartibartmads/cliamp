@@ -10,8 +10,14 @@ import (
 // Uses RuneCountInString first to avoid rune slice allocation in the common
 // case where the string is already short enough.
 func truncate(s string, maxW int) string {
+	if maxW <= 0 {
+		return ""
+	}
 	if utf8.RuneCountInString(s) <= maxW {
 		return s
+	}
+	if maxW == 1 {
+		return "…"
 	}
 	r := []rune(s)
 	return string(r[:maxW-1]) + "…"
