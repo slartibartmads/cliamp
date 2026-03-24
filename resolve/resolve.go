@@ -163,6 +163,15 @@ func Remote(urls []string) ([]playlist.Track, error) {
 // indicates an RSS/Atom feed. Used as a fallback when the URL has no
 // recognizable file extension (e.g. https://feeds.megaphone.fm/GLT1412515089).
 func sniffFeedURL(rawURL string) bool {
+	// URLs with a known audio extension are never feeds — skip the
+	// network round-trip to avoid misclassification when CDNs return
+	// unexpected Content-Types for HEAD requests.
+	if u, err := url.Parse(rawURL); err == nil {
+		if player.SupportedExts[strings.ToLower(filepath.Ext(u.Path))] {
+			return false
+		}
+	}
+
 	resp, err := httpClient.Head(rawURL)
 	if err != nil {
 		return false
