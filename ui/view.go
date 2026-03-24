@@ -568,29 +568,43 @@ func (m Model) renderHelp() string {
 		return helpKey("←→", "Select ") + helpKey("Enter", "Open ") + helpKey("Tab", "Focus ") + helpKey("Esc", "Back ") + helpKey("Q", "Quit")
 	}
 
-	// Build help hints with priority (lower = dropped first when too wide).
+	// Build focus-specific help hints (lower priority = dropped first when too wide).
 	var hints []helpHint
 
 	hints = append(hints, helpHint{helpKey("Spc", "⏯ "), 100})
 	hints = append(hints, helpHint{helpKey("<>", "Trk "), 90})
 
-	track, _ := m.playlist.Current()
-	if !track.Stream || m.player.Seekable() {
-		hints = append(hints, helpHint{helpKey("←→", "Seek "), 70})
+	if m.focus == focusEQ {
+		hints = append(hints,
+			helpHint{helpKey("←→", "Band "), 95},
+			helpHint{helpKey("↑↓", "Gain "), 95},
+			helpHint{helpKey("+-", "Vol "), 80},
+			helpHint{helpKey("e", "Preset "), 70},
+			helpHint{helpKey("Tab", "Focus "), 50},
+			helpHint{helpKey("Ctrl+K", "Keys "), 60},
+			helpHint{helpKey("Q", "Quit"), 85},
+		)
+	} else {
+		// focusPlaylist (default)
+		track, _ := m.playlist.Current()
+		if !track.Stream || m.player.Seekable() {
+			hints = append(hints, helpHint{helpKey("←→", "Seek "), 70})
+		}
+		hints = append(hints,
+			helpHint{helpKey("↑↓", "Scroll "), 85},
+			helpHint{helpKey("+-", "Vol "), 80},
+			helpHint{helpKey("Enter", "Play "), 75},
+			helpHint{helpKey("/", "Search "), 40},
+			helpHint{helpKey("f", "Find "), 35},
+			helpHint{helpKey("z", "Shfl "), 20},
+			helpHint{helpKey("r", "Rpt "), 20},
+			helpHint{helpKey("y", "Lyrics "), 25},
+			helpHint{helpKey("a", "Queue "), 30},
+			helpHint{helpKey("Tab", "Focus "), 50},
+			helpHint{helpKey("Ctrl+K", "Keys "), 60},
+			helpHint{helpKey("Q", "Quit"), 85},
+		)
 	}
-
-	hints = append(hints,
-		helpHint{helpKey("+-", "Vol "), 80},
-		helpHint{helpKey("z", "Shfl "), 20},
-		helpHint{helpKey("r", "Rpt "), 20},
-		helpHint{helpKey("/", "Search "), 40},
-		helpHint{helpKey("f", "Find "), 35},
-		helpHint{helpKey("y", "Lyrics "), 25},
-		helpHint{helpKey("a", "Queue "), 30},
-		helpHint{helpKey("Tab", "Focus "), 50},
-		helpHint{helpKey("Ctrl+K", "Keys "), 60},
-		helpHint{helpKey("Q", "Quit"), 95},
-	)
 
 	return fitHints(hints, panelWidth)
 }
