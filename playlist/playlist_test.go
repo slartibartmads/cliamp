@@ -202,6 +202,71 @@ func TestMoveShuffle(t *testing.T) {
 	}
 }
 
+func TestAddShufflesNewTracksWhenShuffleEnabled(t *testing.T) {
+	p := makePlaylist(10, true)
+	p.SetIndex(p.order[0]) // ensure pos is valid and stable
+	cur, curIdx := p.Current()
+
+	start := p.Len()
+	var added []Track
+	for i := 0; i < 30; i++ {
+		added = append(added, Track{Title: string(rune('K' + i))})
+	}
+	p.Add(added...)
+
+	// Current track should be unchanged.
+	cur2, curIdx2 := p.Current()
+	if cur2.Title != cur.Title || curIdx2 != curIdx {
+		t.Fatalf("current = (%q,%d), want (%q,%d)", cur2.Title, curIdx2, cur.Title, curIdx)
+	}
+
+	// Verify that added tracks are interleaved with existing upcoming tracks,
+	// not just shuffled among themselves at the tail.
+	upcoming := p.order[p.pos+1:]
+	isNew := func(idx int) bool { return idx >= start }
+	// Find the last new-track position and check that at least one
+	// old track appears after some new track in the upcoming order.
+	lastNew := -1
+	foundOldAfterNew := false
+	for i, idx := range upcoming {
+		if isNew(idx) {
+			lastNew = i
+		} else if lastNew >= 0 {
+			foundOldAfterNew = true
+			break
+		}
+	}
+	if lastNew < 0 {
+		t.Fatal("no added track found in upcoming order")
+	}
+	if !foundOldAfterNew && lastNew < len(upcoming)-1 {
+		t.Fatalf("added tracks are not interleaved with existing tracks in upcoming order: %v", upcoming)
+	}
+}
+
+func TestAddDoesNotShuffleWhenShuffleDisabled(t *testing.T) {
+	p := makePlaylist(5, false)
+	p.SetIndex(2)
+	cur, curIdx := p.Current()
+
+	p.Add(Track{Title: "F"}, Track{Title: "G"})
+
+	cur2, curIdx2 := p.Current()
+	if cur2.Title != cur.Title || curIdx2 != curIdx {
+		t.Fatalf("current = (%q,%d), want (%q,%d)", cur2.Title, curIdx2, cur.Title, curIdx)
+	}
+
+	wantOrder := []int{0, 1, 2, 3, 4, 5, 6}
+	if len(p.order) != len(wantOrder) {
+		t.Fatalf("order len = %d, want %d", len(p.order), len(wantOrder))
+	}
+	for i := range wantOrder {
+		if p.order[i] != wantOrder[i] {
+			t.Fatalf("order[%d] = %d, want %d (order=%v)", i, p.order[i], wantOrder[i], p.order)
+		}
+	}
+}
+
 func TestMoveQueue(t *testing.T) {
 	p := makePlaylist(5, false) // A B C D E
 	p.Queue(3)                  // D
