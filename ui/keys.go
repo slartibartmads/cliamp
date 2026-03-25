@@ -185,6 +185,20 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 			return m.openRadioCatalog()
 		case "J":
 			m.openJumpMode()
+		case "x":
+			defVis := m.defaultPlVisible()
+			if m.plVisible <= defVis {
+				probe := strings.Join([]string{
+					m.renderTitle(), m.renderTrackInfo(), m.renderTimeStatus(), "",
+					m.renderSpectrum(), m.renderSeekBar(), "",
+					m.renderControls(), "", m.renderPlaylistHeader(),
+					"x", "", m.renderHelp(), m.renderStreamStatus(),
+				}, "\n")
+				fixedLines := lipgloss.Height(frameStyle.Render(probe)) - 1
+				m.plVisible = max(minPlVisible, min(maxPlExpandVisible, m.height-fixedLines))
+			} else {
+				m.plVisible = defVis
+			}
 		}
 		return nil
 	}
@@ -221,6 +235,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 			m.fullVis = false
 			m.vis.Rows = defaultVisRows
 		} else if m.focus == focusPlaylist {
+			m.plVisible = m.defaultPlVisible()
 			m.focus = focusProvider
 		}
 
@@ -507,7 +522,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 
 	case "x":
 		if m.focus == focusPlaylist {
-			if m.plVisible <= minPlVisible {
+			defVis := m.defaultPlVisible()
+			if m.plVisible <= defVis {
 				// Expand: recalculate dynamic max from terminal height.
 				probe := strings.Join([]string{
 					m.renderTitle(), m.renderTrackInfo(), m.renderTimeStatus(), "",
@@ -518,7 +534,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 				fixedLines := lipgloss.Height(frameStyle.Render(probe)) - 1
 				m.plVisible = max(minPlVisible, min(maxPlExpandVisible, m.height-fixedLines))
 			} else {
-				m.plVisible = minPlVisible
+				m.plVisible = defVis
 			}
 			m.adjustScroll()
 		}
