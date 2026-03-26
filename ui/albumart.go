@@ -85,12 +85,7 @@ func coverArtPixelSize(mode CoverArtMode, cols, rows int) (w, h int) {
 	case CoverArtQuadrant:
 		return cols * 2, rows * 2
 	case CoverArtBitmap:
-		// Compute a square pixel dimension from the cell width.
-		// Cells are ~2:1 (h:w), so height needs 1/2 the per-cell pixels
-		// to produce equal pixel dimensions across the full grid.
-		const pxPerCell = 16
-		pixelW := cols * pxPerCell
-		return pixelW, pixelW
+		return 256, 256
 	default: // CoverArtSextant
 		return cols * 2, rows * 3
 	}
