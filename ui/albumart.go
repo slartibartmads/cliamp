@@ -76,28 +76,6 @@ func (m CoverArtMode) String() string {
 	}
 }
 
-// idealArtCols returns the number of columns that produces a square pixel
-// image for the given mode and row count. Each mode has different sub-pixel
-// dimensions per cell, so the column count must compensate.
-func idealArtCols(mode CoverArtMode, numRows int) int {
-	switch mode {
-	case CoverArtSextant:
-		// 2×3 sub-pixels/cell: artCols*2 = numRows*3
-		return numRows * 3 / 2
-	case CoverArtQuadrant:
-		// 2×2 sub-pixels/cell: artCols*2 = numRows*2
-		return numRows
-	case CoverArtHalfBlock:
-		// 1×2 sub-pixels/cell: artCols*1 = numRows*2
-		return numRows * 2
-	case CoverArtBitmap:
-		// Square pixel source: artCols*16 = artCols*16
-		return numRows * 2
-	default:
-		return numRows * 2
-	}
-}
-
 // coverArtPixelSize returns the pixel dimensions the source image must be
 // scaled to before rendering with the given mode and cell dimensions.
 func coverArtPixelSize(mode CoverArtMode, cols, rows int) (w, h int) {

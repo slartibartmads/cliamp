@@ -269,10 +269,7 @@ func (m Model) renderHeaderBlock() string {
 	if m.vis.Mode != VisNone {
 		numRows += m.vis.Rows
 	}
-	artCols := idealArtCols(m.coverArtMode, numRows)
-	if artCols < 1 {
-		artCols = 1
-	}
+	artCols := numRows * 2
 	if artCols > panelWidth/2 {
 		artCols = panelWidth / 2
 	}
