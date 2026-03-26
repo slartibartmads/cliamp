@@ -392,10 +392,11 @@ type subsonicSong struct {
 	TrackNumber int    `json:"track"`
 	Genre       string `json:"genre"`
 	Duration    int    `json:"duration"`
+	CoverArt    string `json:"coverArt"`
 }
 
 func (c *NavidromeClient) songToTrack(s subsonicSong) playlist.Track {
-	return playlist.Track{
+	t := playlist.Track{
 		Path:         c.streamURL(s.ID),
 		NavidromeID:  s.ID,
 		Title:        s.Title,
@@ -407,6 +408,10 @@ func (c *NavidromeClient) songToTrack(s subsonicSong) playlist.Track {
 		Stream:       true,
 		DurationSecs: s.Duration,
 	}
+	if s.CoverArt != "" {
+		t.CoverArtURL = c.buildURL("getCoverArt", url.Values{"id": {s.CoverArt}, "size": {"300"}})
+	}
+	return t
 }
 
 // subsonicAlbum holds the common JSON fields returned by the Subsonic API

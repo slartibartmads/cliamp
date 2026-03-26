@@ -4,6 +4,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"image"
 	"strconv"
 	"strings"
 	"time"
@@ -254,6 +255,13 @@ type Model struct {
 	cachedDur  time.Duration
 	lastTickAt time.Time // wall time of previous tickMsg; used for tick delta
 
+	// Cached cover art; updated when the current track changes.
+	coverArtPath     string      // path of track whose image is cached
+	coverArtKey      string      // art source identifier (URL or "embedded:<len>")
+	coverArtImage    image.Image // decoded cover art; nil if absent
+	coverArtScaled   *image.RGBA // Lanczos-scaled to current display dimensions
+	coverArtFetching bool        // true while an async HTTP fetch is in-flight
+
 	// Navidrome client (kept separate from navBrowser for non-browser operations)
 	navClient          *navidrome.NavidromeClient
 	navScrobbleEnabled bool
@@ -463,6 +471,33 @@ func (m *Model) themePickerCancel() {
 		applyTheme(m.themes[m.themeIdx])
 	}
 	m.themePicker.visible = false
+}
+
+// artDisplayDims returns the (artCols, numRows) used to render the cover art
+// thumbnail, mirroring the logic in renderHeaderBlock.
+func (m Model) artDisplayDims() (artCols, numRows int) {
+	numRows = 4 // title + trackinfo + timestatus + blank
+	if m.vis.Mode != VisNone {
+		numRows += m.vis.Rows
+	}
+	artCols = numRows * 2
+	if artCols > panelWidth/2 {
+		artCols = panelWidth / 2
+	}
+	return
+}
+
+// updateCoverArtScaled recomputes the Lanczos-scaled thumbnail from
+// coverArtImage at the current display dimensions and refreshes the theme.
+func (m *Model) updateCoverArtScaled() {
+	if m.coverArtImage == nil {
+		m.coverArtScaled = nil
+		m.restoreBaseTheme()
+		return
+	}
+	artCols, numRows := m.artDisplayDims()
+	m.coverArtScaled = scaleImageLanczos(m.coverArtImage, artCols*2, numRows*2)
+	applyTheme(themeFromImage(m.coverArtScaled))
 }
 
 // openPlaylistManager loads playlist metadata and opens the manager overlay.
@@ -964,11 +999,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		frameStyle = frameStyle.Width(frameW)
 		panelWidth = max(0, frameW-2*paddingH)
+		if m.headerPlugin != nil {
+			m.headerPlugin.OnResize()
+		}
 		if m.fullVis {
 			m.vis.Rows = max(defaultVisRows, (m.height-10)*4/5)
 		}
-		m.plVisible = m.defaultPlVisible()
+		// Dynamic playlist height: render all non-playlist sections, measure
+		// total height, then give the remaining space to the playlist.
+		// This avoids fragile manual line counting.
+		m.plVisible = 3 // temporary minimal value for measurement
+		probe := strings.Join([]string{
+			m.renderHeaderBlock(),
+			"",
+			m.renderControls(),
+			m.renderProviderPill(),
+			"",
+			m.renderPlaylistHeader(),
+			"x", // placeholder for playlist (1 line)
+			"",
+			m.renderHelp(),
+			m.renderBottomStatus(),
+		}, "\n")
+		probeFrame := frameStyle.Render(probe)
+		fixedLines := lipgloss.Height(probeFrame) - 1 // subtract the 1-line placeholder
+		m.plVisible = max(3, min(maxPlVisible, m.height-fixedLines))
 		return m, m.terminalTitleCmd()
+
+	case coverArtFetchedMsg:
+		if msg.path == m.coverArtPath {
+			m.coverArtImage = msg.img
+			m.coverArtFetching = false
+			m.updateCoverArtScaled()
+		}
+		return m, nil
 
 	case seekTickMsg:
 		// Async yt-dlp seek completed.
@@ -999,6 +1063,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cachedPos = 0
 		}
 		m.tickVisualizer(now)
+		// Update cover art when the current track changes.
+		if track, _ := m.playlist.Current(); track.Path != m.coverArtPath {
+			m.coverArtPath = track.Path
+
+			// Compute the art source key for the new track so we can detect
+			// same-album skips (e.g. all tracks sharing one CoverArtURL).
+			newKey := track.CoverArtURL
+			if newKey == "" && len(track.CoverArt) > 0 {
+				newKey = fmt.Sprintf("embedded:%d", len(track.CoverArt))
+			}
+
+			if newKey != "" && newKey == m.coverArtKey {
+				// Same art source — keep the current image and theme as-is.
+			} else {
+				m.coverArtKey = newKey
+				m.coverArtImage = nil
+				m.coverArtFetching = false
+				if len(track.CoverArt) > 0 {
+					// Embedded bytes (local files): decode synchronously — no I/O.
+					m.coverArtImage = decodeCoverArt(track.CoverArt)
+				}
+				m.updateCoverArtScaled()
+			}
+		}
 		// Process debounced yt-dlp seek.
 		var seekCmd tea.Cmd
 		if cmd := m.tickSeek(dt); cmd != nil {
@@ -1080,6 +1168,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmds []tea.Cmd
 		if seekCmd != nil {
 			cmds = append(cmds, seekCmd)
+		}
+		// Kick off an async fetch if the current track has a cover art URL but
+		// no image yet and no fetch is already in-flight.
+		if track, _ := m.playlist.Current(); m.coverArtImage == nil && !m.coverArtFetching && track.CoverArtURL != "" && track.Path == m.coverArtPath {
+			m.coverArtFetching = true
+			cmds = append(cmds, fetchCoverArtCmd(track.Path, track.CoverArtURL))
 		}
 		if lyricCmd != nil {
 			cmds = append(cmds, lyricCmd)
@@ -1741,9 +1835,12 @@ func (m *Model) defaultPlVisible() int {
 	m.plVisible = 3 // temporary minimal value for measurement
 	defer func() { m.plVisible = saved }()
 	probe := strings.Join([]string{
-		m.renderTitle(), m.renderTrackInfo(), m.renderTimeStatus(), "",
-		m.renderSpectrum(), m.renderSeekBar(), "",
-		m.renderControls(), "", m.renderPlaylistHeader(),
+		m.renderHeaderBlock(),
+		"",
+		m.renderControls(),
+		m.renderProviderPill(),
+		"",
+		m.renderPlaylistHeader(),
 		"x", "", m.renderHelp(), m.renderBottomStatus(),
 	}, "\n")
 	fixedLines := lipgloss.Height(frameStyle.Render(probe)) - 1

@@ -102,14 +102,8 @@ func appendFooter(lines, footer []string) []string {
 
 func (m Model) mainSections(playlist string, includeTransient bool) []string {
 	sections := []string{
-		// Now playing
-		m.renderTitle(),
-		m.renderTrackInfo(),
-		m.renderTimeStatus(),
-		"",
-		// Visualizer
-		m.renderSpectrum(),
-		m.renderSeekBar(),
+		// Now playing + visualizer (with album art alongside when available)
+		m.renderHeaderBlock(),
 		"",
 		// Controls
 		m.renderControls(),
@@ -182,7 +176,7 @@ func (m Model) renderTitle() string {
 	return titleStyle.Render("C L I A M P")
 }
 
-func (m Model) renderTrackInfo() string {
+func (m Model) renderTrackInfo(width int) string {
 	track, _ := m.playlist.Current()
 	name := track.DisplayName()
 	if name == "" {
@@ -202,7 +196,7 @@ func (m Model) renderTrackInfo() string {
 		name += " · " + album
 	}
 
-	maxW := panelWidth - 4
+	maxW := width - 4
 	runes := []rune(name)
 
 	if len(runes) <= maxW {
@@ -221,7 +215,7 @@ func (m Model) renderTrackInfo() string {
 	return trackStyle.Render("♫ " + string(display))
 }
 
-func (m Model) renderTimeStatus() string {
+func (m Model) renderTimeStatus(width int) string {
 	// Use per-tick cached values to avoid repeated speaker.Lock() calls.
 	pos := m.cachedPos
 	dur := m.cachedDur
@@ -257,7 +251,7 @@ func (m Model) renderTimeStatus() string {
 	}
 
 	left := timeStyle.Render(timeStr)
-	gap := panelWidth - lipgloss.Width(left) - lipgloss.Width(status)
+	gap := width - lipgloss.Width(left) - lipgloss.Width(status)
 	if gap < 1 {
 		gap = 1
 	}
@@ -265,22 +259,88 @@ func (m Model) renderTimeStatus() string {
 	return left + strings.Repeat(" ", gap) + status
 }
 
-func (m Model) renderSpectrum() string {
-	if m.vis.Mode == VisNone {
-		return ""
+// renderHeaderBlock renders the "now playing" header (title, track info, time,
+// spectrum, seek bar) as the left column, with album art spanning the full
+// height to the right when cover art is available.
+func (m Model) renderHeaderBlock() string {
+	hasArt := m.coverArtScaled != nil
+
+	// artCols = numRows*2 produces a visually square thumbnail: terminal cells
+	// are ~2:1 (height:width) and half-block pixels are square, so width in
+	// columns must equal 2× the height in terminal rows.
+	numRows := 4 // title + trackinfo + timestatus + blank
+	if m.vis.Mode != VisNone {
+		numRows += m.vis.Rows
 	}
-	return m.vis.Render()
+	artCols := numRows * 2
+	if artCols > panelWidth/2 {
+		artCols = panelWidth / 2
+	}
+
+	const artGap = 2
+	leftW := panelWidth
+	if hasArt {
+		leftW = panelWidth - artCols - artGap
+	}
+
+	// Build the left column line by line.
+	leftLines := []string{
+		m.renderTitle(),
+		m.renderTrackInfo(leftW),
+		m.renderTimeStatus(leftW),
+		"",
+	}
+
+	if m.vis.Mode != VisNone {
+		m.vis.Width = leftW
+		n := m.player.SamplesInto(m.vis.sampleBuf)
+		bands := m.vis.Analyze(m.vis.sampleBuf[:n])
+		leftLines = append(leftLines, strings.Split(m.vis.Render(bands), "\n")...)
+	}
+
+	if !hasArt {
+		return strings.Join(leftLines, "\n") + "\n\n" + m.renderSeekBar(panelWidth)
+	}
+
+	// Render art at the exact height of the left column so it aligns top to bottom.
+	artStr := renderCoverArt(m.coverArtScaled, artCols, len(leftLines))
+	artLines := strings.Split(artStr, "\n")
+
+	var sb strings.Builder
+	for i, l := range leftLines {
+		if i > 0 {
+			sb.WriteByte('\n')
+		}
+		// Pad the left line to leftW so the art column stays flush.
+		lw := lipgloss.Width(l)
+		sb.WriteString(l)
+		if lw < leftW {
+			sb.WriteString(strings.Repeat(" ", leftW-lw))
+		}
+		sb.WriteString(strings.Repeat(" ", artGap))
+		if i < len(artLines) {
+			sb.WriteString(artLines[i])
+		}
+	}
+	// Seek bar spans the full panel width, below both the text column and the art.
+	sb.WriteString("\n\n")
+	sb.WriteString(m.renderSeekBar(panelWidth))
+	return sb.String()
 }
 
 // renderFullVisualizer renders a full-screen view showing only the visualizer
 // with minimal track info and a seek bar.
 func (m Model) renderFullVisualizer() string {
+	m.vis.Width = panelWidth
+	n := m.player.SamplesInto(m.vis.sampleBuf)
+	bands := m.vis.Analyze(m.vis.sampleBuf[:n])
 	sections := []string{
-		m.renderTrackInfo(),
-		m.renderTimeStatus(),
+		m.renderTrackInfo(panelWidth),
+		m.renderTimeStatus(panelWidth),
 		"",
-		m.renderSpectrum(),
-		m.renderSeekBar(),
+		m.vis.Render(bands),
+		"",
+		m.renderSeekBar(panelWidth),
 		"",
 		helpKey("V", "Exit ") + helpKey("v", "Mode:"+m.vis.ModeName()+" ") + helpKey("Spc", "⏯ ") + helpKey("<>", "Trk ") + helpKey("+-", "Vol"),
 	}
@@ -288,20 +348,20 @@ func (m Model) renderFullVisualizer() string {
 	return m.centerOverlay(strings.Join(sections, "\n"))
 }
 
-func (m Model) renderSeekBar() string {
-	if panelWidth <= 0 {
+func (m Model) renderSeekBar(width int) string {
+	if width <= 0 {
 		return ""
 	}
 	// During buffering, show a dim bar — avoids speaker.Lock() contention.
 	if m.buffering {
-		return seekDimStyle.Render(strings.Repeat("━", panelWidth))
+		return seekDimStyle.Render(strings.Repeat("━", width))
 	}
 	// Show a static streaming bar for non-seekable streams with no known duration.
 	if !m.player.Seekable() && m.player.IsPlaying() && m.cachedDur == 0 {
 		label := " STREAMING "
-		pad := panelWidth - lipgloss.Width(label)
+		pad := width - lipgloss.Width(label)
 		if pad < 0 {
-			return seekFillStyle.Render(label[:panelWidth])
+			return seekFillStyle.Render(label[:width])
 		}
 		left := pad / 2
 		right := pad - left
@@ -317,11 +377,11 @@ func (m Model) renderSeekBar() string {
 	}
 	progress = max(0, min(1, progress))
 
-	filled := int(progress * float64(max(1, panelWidth-1)))
+	filled := int(progress * float64(max(1, width-1)))
 
 	return seekFillStyle.Render(strings.Repeat("━", filled)) +
 		seekFillStyle.Render("●") +
-		seekDimStyle.Render(strings.Repeat("━", max(0, panelWidth-filled-1)))
+		seekDimStyle.Render(strings.Repeat("━", max(0, width-filled-1)))
 }
 
 func (m Model) renderControls() string {

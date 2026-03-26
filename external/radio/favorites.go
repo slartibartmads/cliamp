@@ -116,6 +116,9 @@ func (f *Favorites) save() error {
 		if s.Homepage != "" {
 			fmt.Fprintf(file, "homepage = %q\n", s.Homepage)
 		}
+		if s.Favicon != "" {
+			fmt.Fprintf(file, "favicon = %q\n", s.Favicon)
+		}
 	}
 	return nil
 }
@@ -169,6 +172,8 @@ func loadFavoriteStations(path string) ([]CatalogStation, error) {
 			current.Tags = tomlutil.Unquote(val)
 		case "homepage":
 			current.Homepage = tomlutil.Unquote(val)
+		case "favicon":
+			current.Favicon = tomlutil.Unquote(val)
 		case "bitrate":
 			if n, err := strconv.Atoi(val); err == nil {
 				current.Bitrate = n

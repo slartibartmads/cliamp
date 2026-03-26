@@ -33,6 +33,9 @@ func readTags(path string) Track {
 	}
 	trackNum, _ := m.Track()
 	t.TrackNumber = trackNum
+	if pic := m.Picture(); pic != nil {
+		t.CoverArt = pic.Data
+	}
 	return t
 }
 

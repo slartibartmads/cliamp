@@ -22,6 +22,7 @@ type CatalogStation struct {
 	Bitrate  int    `json:"bitrate"`
 	Votes    int    `json:"votes"`
 	Homepage string `json:"homepage"`
+	Favicon  string `json:"favicon"`
 }
 
 var catalogClient = &http.Client{Timeout: 10 * time.Second}

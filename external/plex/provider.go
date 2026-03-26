@@ -113,6 +113,7 @@ func (p *Provider) Tracks(albumRatingKey string) ([]playlist.Track, error) {
 			TrackNumber:  t.TrackNumber,
 			DurationSecs: t.Duration / 1000,
 			Stream:       true,
+			CoverArtURL:  p.client.ThumbURL(t.ThumbKey),
 		})
 	}
 

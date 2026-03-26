@@ -54,6 +54,7 @@ type Track struct {
 	TrackNumber int    // index field in Plex API
 	Duration    int    // milliseconds
 	PartKey     string // relative path, e.g. "/library/parts/67890/1234567890/file.flac"
+	ThumbKey    string // relative path to album art thumbnail, e.g. "/library/metadata/…/thumb/…"
 }
 
 // get issues an authenticated GET request and decodes the JSON response into result.
@@ -239,6 +240,7 @@ type trackJSON struct {
 	Title            string `json:"title"`
 	GrandparentTitle string `json:"grandparentTitle"` // artist
 	ParentTitle      string `json:"parentTitle"`      // album
+	ParentThumb      string `json:"parentThumb"`      // album art relative path
 	Year             int    `json:"year"`
 	Index            int    `json:"index"` // track number within album
 	Duration         int    `json:"duration"` // milliseconds
@@ -263,5 +265,15 @@ func trackFromJSON(m trackJSON) Track {
 		TrackNumber: m.Index,
 		Duration:    m.Duration,
 		PartKey:     partKey,
+		ThumbKey:    m.ParentThumb,
 	}
+}
+
+// ThumbURL returns the authenticated URL for the track's album art thumbnail.
+// Returns an empty string if no thumbnail is available.
+func (c *Client) ThumbURL(thumbKey string) string {
+	if thumbKey == "" {
+		return ""
+	}
+	return c.baseURL + thumbKey + "?X-Plex-Token=" + url.QueryEscape(c.token)
 }

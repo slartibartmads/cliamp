@@ -34,8 +34,9 @@ type Provider struct {
 }
 
 type station struct {
-	name string
-	url  string
+	name  string
+	url   string
+	image string
 }
 
 // New creates a Provider with the built-in station plus any user-defined
@@ -123,35 +124,39 @@ func (p *Provider) Tracks(id string) ([]playlist.Track, error) {
 		return nil, err
 	}
 
-	var url, title string
+	var url, title, cover string
 	switch prefix {
 	case "l":
 		if idx < 0 || idx >= len(p.stations) {
 			return nil, errors.New("invalid local station index")
 		}
 		url, title = p.stations[idx].url, p.stations[idx].name
+		cover = p.stations[idx].image
 	case "f":
 		favs := p.favorites.Stations()
 		if idx < 0 || idx >= len(favs) {
 			return nil, errors.New("invalid favorite index")
 		}
 		url, title = favs[idx].URL, favs[idx].Name
+		cover = favs[idx].Favicon
 	case "c":
 		if idx < 0 || idx >= len(p.catalog) {
 			return nil, errors.New("invalid catalog station index")
 		}
 		url, title = p.catalog[idx].URL, p.catalog[idx].Name
+		cover = p.catalog[idx].Favicon
 	case "s":
 		if p.searchResults == nil || idx < 0 || idx >= len(p.searchResults) {
 			return nil, errors.New("invalid search result index")
 		}
 		url, title = p.searchResults[idx].URL, p.searchResults[idx].Name
+		cover = p.searchResults[idx].Favicon
 	default:
 		return nil, errors.New("unknown station type")
 	}
 
 	return []playlist.Track{{
-		Path: url, Title: title, Stream: true, Realtime: true,
+		Path: url, Title: title, Stream: true, Realtime: true, CoverArtURL: cover,
 	}}, nil
 }
 
@@ -309,6 +314,8 @@ func loadStations(path string) ([]station, error) {
 			current.name = val
 		case "url":
 			current.url = val
+		case "image":
+			current.image = val
 		}
 	}
 	if current != nil && current.name != "" && current.url != "" {

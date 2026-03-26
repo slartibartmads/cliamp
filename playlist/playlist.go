@@ -42,6 +42,8 @@ type Track struct {
 	Realtime     bool   // true for real-time/live streams (e.g. radio)
 	DurationSecs int    // known duration in seconds (0 = unknown)
 	NavidromeID  string // Subsonic song ID; empty for non-Navidrome tracks
+	CoverArt     []byte // embedded cover image data (JPEG/PNG); nil if absent
+	CoverArtURL  string // URL to fetch cover art from (used when CoverArt is nil)
 }
 
 // IsURL reports whether path is an HTTP or HTTPS URL, or a yt-dlp search protocol string.

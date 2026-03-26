@@ -325,6 +325,10 @@ func (p *SpotifyProvider) Tracks(playlistID string) ([]playlist.Track, error) {
 		Album struct {
 			Name        string `json:"name"`
 			ReleaseDate string `json:"release_date"`
+			Images      []struct {
+				URL   string `json:"url"`
+				Width int    `json:"width"`
+			} `json:"images"`
 		} `json:"album"`
 		DurationMs  int `json:"duration_ms"`
 		TrackNumber int `json:"track_number"`
@@ -350,7 +354,7 @@ func (p *SpotifyProvider) Tracks(playlistID string) ([]playlist.Track, error) {
 			query := url.Values{
 				"limit":  {fmt.Sprintf("%d", limit)},
 				"offset": {fmt.Sprintf("%d", offset)},
-				"fields": {"items(item(id,name,artists(name),album(name,release_date),duration_ms,track_number)),total"},
+				"fields": {"items(item(id,name,artists(name),album(name,release_date,images(url,width)),duration_ms,track_number)),total"},
 			}
 			path := fmt.Sprintf("/v1/playlists/%s/items", playlistID)
 			resp, err = p.webAPI(ctx, "GET", path, query)
@@ -395,7 +399,7 @@ func (p *SpotifyProvider) Tracks(playlistID string) ([]playlist.Track, error) {
 				}
 			}
 
-			all = append(all, playlist.Track{
+			tr := playlist.Track{
 				Path:         fmt.Sprintf("spotify:track:%s", t.ID),
 				Title:        t.Name,
 				Artist:       strings.Join(artists, ", "),
@@ -404,7 +408,18 @@ func (p *SpotifyProvider) Tracks(playlistID string) ([]playlist.Track, error) {
 				Stream:       false, // must be false: true causes togglePlayPause to stop+restart instead of pause/resume
 				DurationSecs: t.DurationMs / 1000,
 				TrackNumber:  t.TrackNumber,
-			})
+			}
+			// Pick the smallest image that is at least 200px wide (avoids the
+			// tiny 64px thumbnail), falling back to the last image in the list.
+			for _, img := range t.Album.Images {
+				if tr.CoverArtURL == "" || img.Width >= 200 {
+					tr.CoverArtURL = img.URL
+				}
+				if img.Width >= 200 && img.Width < 350 {
+					break // good enough; stop looking
+				}
+			}
+			all = append(all, tr)
 		}
 
 		if offset+limit >= result.Total {
