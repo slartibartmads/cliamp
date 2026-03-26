@@ -265,14 +265,14 @@ func (m Model) renderTimeStatus(width int) string {
 func (m Model) renderHeaderBlock() string {
 	hasArt := m.coverArtScaled != nil
 
-	// artCols = numRows*2 produces a visually square thumbnail: terminal cells
-	// are ~2:1 (height:width) and half-block pixels are square, so width in
-	// columns must equal 2× the height in terminal rows.
 	numRows := 4 // title + trackinfo + timestatus + blank
 	if m.vis.Mode != VisNone {
 		numRows += m.vis.Rows
 	}
-	artCols := numRows * 2
+	artCols := idealArtCols(m.coverArtMode, numRows)
+	if artCols < 1 {
+		artCols = 1
+	}
 	if artCols > panelWidth/2 {
 		artCols = panelWidth / 2
 	}
@@ -303,7 +303,7 @@ func (m Model) renderHeaderBlock() string {
 	}
 
 	// Render art at the exact height of the left column so it aligns top to bottom.
-	artStr := renderCoverArt(m.coverArtScaled, artCols, len(leftLines))
+	artStr := renderCoverArt(m.coverArtScaled, artCols, len(leftLines), m.coverArtMode)
 	artLines := strings.Split(artStr, "\n")
 
 	var sb strings.Builder

@@ -16,8 +16,6 @@ import (
 	"cliamp/external/local"
 	"cliamp/external/navidrome"
 	"cliamp/external/radio"
-	"cliamp/external/spotify"
-	"cliamp/luaplugin"
 	"cliamp/mpris"
 	"cliamp/player"
 	"cliamp/playlist"
@@ -29,36 +27,11 @@ type focusArea int
 const (
 	focusPlaylist focusArea = iota
 	focusEQ
-	focusSpeed
 	focusProvPill
 	focusSearch
 	focusProvider
 	focusNetSearch
 )
-
-type topLevelScreen int
-
-const (
-	screenMain topLevelScreen = iota
-	screenKeymap
-	screenThemePicker
-	screenFileBrowser
-	screenNavBrowser
-	screenPlaylistManager
-	screenSpotSearch
-	screenQueue
-	screenInfo
-	screenSearch
-	screenNetSearch
-	screenURLInput
-	screenLyrics
-	screenJump
-	screenFullVisualizer
-)
-
-func (s topLevelScreen) hidesVisualizer() bool {
-	return s != screenMain && s != screenFullVisualizer
-}
 
 // maxPlVisible caps the playlist at a readable height even on tall terminals.
 // maxPlExpandVisible is the higher cap used when the user expands with 'x'.
@@ -108,17 +81,17 @@ type autoPlayMsg struct{}
 const (
 	tickFast = 50 * time.Millisecond  // 20 FPS — visualizer active
 	tickSlow = 200 * time.Millisecond // 5 FPS — visualizer off or overlay
-
-	speedSaveDebounce = time.Second
 )
 
-// statusTTL* constants define how long a status message is shown.
+// statusTTL* constants define how many ticks a status message persists.
+// At tickFast (50ms), 20 ticks ≈ 1 second.
 const (
-	statusTTLShort   statusTTL = statusTTL(2 * time.Second)         // brief confirmations
-	statusTTLDefault statusTTL = statusTTL(3 * time.Second)         // standard status messages
-	statusTTLMedium  statusTTL = statusTTL(4 * time.Second)         // messages needing extra visibility
-	statusTTLBatch   statusTTL = statusTTL(4500 * time.Millisecond) // batch operation feedback
-	statusTTLLong    statusTTL = statusTTL(6 * time.Second)         // loading indicators
+	statusTTLShort    = 40  // ~2s — brief confirmations
+	statusTTLDefault  = 60  // ~3s — standard status messages
+	statusTTLMedium   = 80  // ~4s — messages needing extra visibility
+	statusTTLBatch    = 90  // ~4.5s — batch operation feedback
+	statusTTLLong     = 120 // ~6s — loading indicators
+	statusTTLDownload = 600 // ~30s — cleared manually by completion message
 )
 
 // minPlVisible is the minimum playlist height when collapsed.
@@ -147,53 +120,47 @@ type Model struct {
 	seekStepLarge time.Duration
 
 	// UI navigation
-	focus           focusArea
-	prevFocus       focusArea // focus to restore on cancel (search, net search)
-	eqCursor        int       // selected EQ band (0-9)
-	plCursor        int       // selected playlist item
-	plScroll        int       // scroll offset for playlist view
-	plVisible       int       // desired max visible playlist lines
+	focus     focusArea
+	prevFocus focusArea // focus to restore on cancel (search, net search)
+	eqCursor  int       // selected EQ band (0-9)
+	plCursor  int       // selected playlist item
+	plScroll  int       // scroll offset for playlist view
+	plVisible int       // max visible playlist items
 	titleOff        int       // scroll offset for long track titles
 	titleLastScroll time.Time // last time the title scrolled
-	err             error
-	quitting        bool
-	width           int
-	height          int
+	err       error
+	quitting  bool
+	width     int
+	height    int
 
 	// Provider state
-	provider        playlist.Provider
-	localProvider   *local.Provider          // direct ref for write operations (add-to-playlist)
-	spotifyProvider *spotify.SpotifyProvider // direct ref for search/playlist write operations
-	providerLists   []playlist.PlaylistInfo
-	provCursor      int
-	provLoading     bool
-	provSignIn      bool            // true when provider needs interactive sign-in
-	providers       []ProviderEntry // all available providers
-	provPillIdx     int             // selected pill index
-	eqPresetIdx     int             // -1 = custom, 0+ = index into eqPresets
-	eqCustomLabel   string          // non-empty = plugin-defined preset label (shown instead of "Custom")
+	provider      playlist.Provider
+	localProvider *local.Provider // direct ref for write operations (add-to-playlist)
+	providerLists []playlist.PlaylistInfo
+	provCursor    int
+	provLoading   bool
+	provSignIn    bool            // true when provider needs interactive sign-in
+	providers     []ProviderEntry // all available providers
+	provPillIdx   int             // selected pill index
+	eqPresetIdx   int             // -1 = custom, 0+ = index into eqPresets
 
 	// Overlay / feature state (see state.go for struct definitions)
-	search         searchState
-	netSearch      netSearchState
-	provSearch     provSearchState
-	seek           seekState
-	themePicker    themePickerState
-	lyrics         lyricsState
-	keymap         keymapOverlay
-	queue          queueOverlay
-	plManager      plManagerState
-	spotSearch     spotSearchState
-	fileBrowser    fileBrowserState
-	navBrowser     navBrowserState
-	radioBatch     radioBatchState
-	ytdlBatch      ytdlBatchState
-	reconnect      reconnectState
-	save           saveState
-	status         statusMsg
-	network        networkStats
-	speedSaveAfter time.Duration
-	termTitle      terminalTitleState
+	search      searchState
+	netSearch   netSearchState
+	provSearch  provSearchState
+	seek        seekState
+	themePicker themePickerState
+	lyrics      lyricsState
+	keymap      keymapOverlay
+	queue       queueOverlay
+	plManager   plManagerState
+	fileBrowser fileBrowserState
+	navBrowser    navBrowserState
+	radioCatalog  radioCatalogState
+	ytdlBatch     ytdlBatchState
+	reconnect   reconnectState
+	status      statusMsg
+	network     networkStats
 
 	// Jump to time mode
 	jumping   bool
@@ -234,9 +201,6 @@ type Model struct {
 	// MPRIS D-Bus service (nil on non-Linux or if D-Bus unavailable)
 	mpris *mpris.Service
 
-	// Lua plugin manager (nil if no plugins loaded)
-	luaMgr *luaplugin.Manager
-
 	// Theme state: -1 = Default (ANSI), 0+ = index into themes
 	themes   []theme.Theme
 	themeIdx int
@@ -251,16 +215,17 @@ type Model struct {
 	compact  bool // compact mode: cap frame width at 80 columns
 
 	// Cached per-tick to avoid repeated speaker.Lock() calls in View().
-	cachedPos  time.Duration
-	cachedDur  time.Duration
-	lastTickAt time.Time // wall time of previous tickMsg; used for tick delta
+	cachedPos time.Duration
+	cachedDur time.Duration
 
 	// Cached cover art; updated when the current track changes.
-	coverArtPath     string      // path of track whose image is cached
-	coverArtKey      string      // art source identifier (URL or "embedded:<len>")
-	coverArtImage    image.Image // decoded cover art; nil if absent
-	coverArtScaled   *image.RGBA // Lanczos-scaled to current display dimensions
-	coverArtFetching bool        // true while an async HTTP fetch is in-flight
+	coverArtPath     string        // path of track whose image is cached
+	coverArtKey      string        // art source identifier (URL or "embedded:<len>")
+	coverArtImage    image.Image   // decoded cover art; nil if absent
+	coverArtScaled   *image.RGBA   // Lanczos-scaled to current display dimensions
+	coverArtFetching bool          // true while an async HTTP fetch is in-flight
+	coverArtMode     CoverArtMode  // block character resolution (sextant/quadrant/half-block)
+	scaleMode        ScaleMode     // resampling filter (lanczos/bicubic/bilinear/nearest)
 
 	// Navidrome client (kept separate from navBrowser for non-browser operations)
 	navClient          *navidrome.NavidromeClient
@@ -274,7 +239,7 @@ type Model struct {
 // navCfg is the Navidrome config used to seed the initial browse sort preference.
 // nav is the raw NavidromeClient (may be nil); stored directly so the browser
 // key handler doesn't have to unwrap a provider.
-func NewModel(p *player.Player, pl *playlist.Playlist, providers []ProviderEntry, defaultProvider string, localProv *local.Provider, spotifyProv *spotify.SpotifyProvider, themes []theme.Theme, navCfg config.NavidromeConfig, nav *navidrome.NavidromeClient, luaMgr *luaplugin.Manager) Model {
+func NewModel(p *player.Player, pl *playlist.Playlist, providers []ProviderEntry, defaultProvider string, localProv *local.Provider, themes []theme.Theme, navCfg config.NavidromeConfig, nav *navidrome.NavidromeClient) Model {
 	sortType := navCfg.BrowseSort
 	if sortType == "" {
 		sortType = navidrome.SortAlphabeticalByName
@@ -289,14 +254,11 @@ func NewModel(p *player.Player, pl *playlist.Playlist, providers []ProviderEntry
 		themes:             themes,
 		themeIdx:           -1, // Default (ANSI)
 		localProvider:      localProv,
-		spotifyProvider:    spotifyProv,
 		providers:          providers,
 		navBrowser:         navBrowserState{sortType: sortType},
 		navClient:          nav,
 		navScrobbleEnabled: navCfg.ScrobbleEnabled(),
-		luaMgr:             luaMgr,
 	}
-	m.termTitle = initialTerminalTitleState()
 	// Select the default provider pill.
 	for i, pe := range providers {
 		if pe.Key == defaultProvider {
@@ -353,18 +315,12 @@ func (m *Model) SetTheme(name string) bool {
 func (m *Model) SetVisualizer(name string) bool {
 	mode := StringToVisMode(name)
 	m.vis.Mode = mode
-	m.vis.requestRefresh()
 	return name == "" || strings.EqualFold(name, m.vis.ModeName())
 }
 
 // VisualizerName returns the current visualizer mode's display name.
 func (m *Model) VisualizerName() string {
 	return m.vis.ModeName()
-}
-
-// RegisterLuaVisualizers adds Lua visualizer plugins to the visualizer cycle.
-func (m *Model) RegisterLuaVisualizers(names []string, renderer luaVisRenderer) {
-	m.vis.RegisterLuaVisualizers(names, renderer)
 }
 
 // SetResume registers a path+position to seek to when that track first plays.
@@ -387,51 +343,15 @@ func (m Model) ThemeName() string {
 	return m.themes[m.themeIdx].Name
 }
 
-func (m Model) activeScreen() topLevelScreen {
-	switch {
-	case m.keymap.visible:
-		return screenKeymap
-	case m.themePicker.visible:
-		return screenThemePicker
-	case m.fileBrowser.visible:
-		return screenFileBrowser
-	case m.navBrowser.visible:
-		return screenNavBrowser
-	case m.plManager.visible:
-		return screenPlaylistManager
-	case m.spotSearch.visible:
-		return screenSpotSearch
-	case m.queue.visible:
-		return screenQueue
-	case m.showInfo:
-		return screenInfo
-	case m.search.active:
-		return screenSearch
-	case m.netSearch.active:
-		return screenNetSearch
-	case m.urlInputting:
-		return screenURLInput
-	case m.lyrics.visible:
-		return screenLyrics
-	case m.jumping:
-		return screenJump
-	case m.fullVis:
-		return screenFullVisualizer
-	default:
-		return screenMain
-	}
-}
-
-func (m Model) isOverlayActive() bool {
-	return m.activeScreen().hidesVisualizer()
-}
-
-func (m Model) isPlaying() bool {
-	return m.player != nil && m.player.IsPlaying()
-}
-
-func (m Model) isPaused() bool {
-	return m.player != nil && m.player.IsPaused()
+// isOverlayActive reports whether a full-screen overlay is shown instead of
+// the main player view. When true, the visualizer is not visible and we can
+// use the slower tick rate.
+func (m *Model) isOverlayActive() bool {
+	return m.keymap.visible || m.themePicker.visible ||
+		m.fileBrowser.visible || m.navBrowser.visible || m.radioCatalog.visible ||
+		m.plManager.visible ||
+		m.queue.visible || m.showInfo || m.search.active || m.netSearch.active ||
+		m.jumping || m.urlInputting
 }
 
 // openThemePicker re-loads themes from disk (picking up new user files)
@@ -480,7 +400,10 @@ func (m Model) artDisplayDims() (artCols, numRows int) {
 	if m.vis.Mode != VisNone {
 		numRows += m.vis.Rows
 	}
-	artCols = numRows * 2
+	artCols = idealArtCols(m.coverArtMode, numRows)
+	if artCols < 1 {
+		artCols = 1
+	}
 	if artCols > panelWidth/2 {
 		artCols = panelWidth / 2
 	}
@@ -496,7 +419,8 @@ func (m *Model) updateCoverArtScaled() {
 		return
 	}
 	artCols, numRows := m.artDisplayDims()
-	m.coverArtScaled = scaleImageLanczos(m.coverArtImage, artCols*2, numRows*2)
+	w, h := coverArtPixelSize(m.coverArtMode, artCols, numRows)
+	m.coverArtScaled = scaleImage(m.coverArtImage, w, h, m.scaleMode)
 	applyTheme(themeFromImage(m.coverArtScaled))
 }
 
@@ -512,7 +436,8 @@ func (m *Model) openPlaylistManager() {
 func (m *Model) plMgrEnterTrackList(name string) {
 	tracks, err := m.localProvider.Tracks(name)
 	if err != nil {
-		m.status.Showf(statusTTLDefault, "Load failed: %s", err)
+		m.status.text = fmt.Sprintf("Load failed: %s", err)
+		m.status.ttl = statusTTLDefault
 		return
 	}
 	m.plManager.selPlaylist = name
@@ -529,7 +454,8 @@ func (m *Model) plMgrRefreshList() {
 	}
 	playlists, err := m.localProvider.Playlists()
 	if err != nil {
-		m.status.Showf(statusTTLDefault, "Load failed: %s", err)
+		m.status.text = fmt.Sprintf("Load failed: %s", err)
+		m.status.ttl = statusTTLDefault
 	}
 	m.plManager.playlists = playlists
 	// +1 for the "+ New Playlist..." entry
@@ -563,20 +489,8 @@ func (m *Model) switchProvider(idx int) tea.Cmd {
 	m.provLoading = true
 	m.provSignIn = false
 	m.provSearch.active = false
-	m.radioBatch = radioBatchState{} // reset catalog batch for new provider
 	m.focus = focusProvider
 	return fetchPlaylistsCmd(m.provider)
-}
-
-// switchToProvider finds a provider by config key and switches to it.
-// Returns nil if the provider is not configured.
-func (m *Model) switchToProvider(key string) tea.Cmd {
-	for i, pe := range m.providers {
-		if pe.Key == key {
-			return m.switchProvider(i)
-		}
-	}
-	return nil
 }
 
 // SetPendingURLs stores remote URLs (feeds, M3U) for async resolution after Init.
@@ -585,46 +499,24 @@ func (m *Model) SetPendingURLs(urls []string) {
 	m.feedLoading = len(urls) > 0
 }
 
-// SetEQPreset sets the preset by name. If it matches a built-in preset,
-// those bands are applied. Otherwise the name is used as a custom label.
-// If bands is non-nil, they are applied regardless of whether the name matches.
-func (m *Model) SetEQPreset(name string, bands *[10]float64) {
-	m.eqCustomLabel = ""
-
-	// Check built-in presets first.
+// SetEQPreset sets the preset index by name. Returns true if found.
+func (m *Model) SetEQPreset(name string) bool {
 	for i, p := range eqPresets {
 		if strings.EqualFold(p.Name, name) {
 			m.eqPresetIdx = i
-			if bands != nil {
-				for j, gain := range bands {
-					m.player.SetEQBand(j, gain)
-				}
-			} else {
-				m.applyEQPreset()
-			}
-			return
+			m.applyEQPreset()
+			return true
 		}
 	}
-
-	// Custom label — set bands if provided, otherwise keep current.
-	m.eqPresetIdx = -1
-	m.eqCustomLabel = name
-	if bands != nil {
-		for i, gain := range bands {
-			m.player.SetEQBand(i, gain)
-		}
-	}
+	return false
 }
 
 // EQPresetName returns the current preset name, or "Custom".
 func (m Model) EQPresetName() string {
-	if m.eqPresetIdx >= 0 && m.eqPresetIdx < len(eqPresets) {
-		return eqPresets[m.eqPresetIdx].Name
+	if m.eqPresetIdx < 0 || m.eqPresetIdx >= len(eqPresets) {
+		return "Custom"
 	}
-	if m.eqCustomLabel != "" {
-		return m.eqCustomLabel
-	}
-	return "Custom"
+	return eqPresets[m.eqPresetIdx].Name
 }
 
 // applyEQPreset writes the current preset's bands to the player.
@@ -642,7 +534,8 @@ func (m *Model) applyEQPreset() {
 func (m *Model) saveEQ() {
 	name := m.EQPresetName()
 	if err := config.Save("eq_preset", fmt.Sprintf("%q", name)); err != nil {
-		m.status.Showf(statusTTLDefault, "Config save failed: %s", err)
+		m.status.text = fmt.Sprintf("Config save failed: %s", err)
+		m.status.ttl = statusTTLDefault
 	}
 	bands := m.player.EQBands()
 	parts := make([]string, len(bands))
@@ -651,41 +544,9 @@ func (m *Model) saveEQ() {
 	}
 	eqVal := "[" + strings.Join(parts, ", ") + "]"
 	if err := config.Save("eq", eqVal); err != nil {
-		m.status.Showf(statusTTLDefault, "Config save failed: %s", err)
+		m.status.text = fmt.Sprintf("Config save failed: %s", err)
+		m.status.ttl = statusTTLDefault
 	}
-}
-
-// saveSpeed persists the current playback speed to the config file.
-func (m *Model) saveSpeed() {
-	speed := m.player.Speed()
-	if err := config.Save("speed", fmt.Sprintf("%.2f", speed)); err != nil {
-		m.status.Showf(statusTTLDefault, "Config save failed: %s", err)
-	}
-}
-
-func (m *Model) changeSpeed(delta float64) {
-	m.player.SetSpeed(m.player.Speed() + delta)
-	m.speedSaveAfter = speedSaveDebounce
-}
-
-func (m *Model) tickPendingSpeedSave(dt time.Duration) {
-	if m.speedSaveAfter <= 0 {
-		return
-	}
-	m.speedSaveAfter -= dt
-	if m.speedSaveAfter > 0 {
-		return
-	}
-	m.speedSaveAfter = 0
-	m.saveSpeed()
-}
-
-func (m *Model) flushPendingSpeedSave() {
-	if m.speedSaveAfter <= 0 {
-		return
-	}
-	m.speedSaveAfter = 0
-	m.saveSpeed()
 }
 
 // fetchNavArtistAllTracksCmd first fetches the artist's album list, then fetches
@@ -770,15 +631,19 @@ func (m *Model) openNavBrowser() {
 	m.navBrowser.searchIdx = nil
 }
 
+// openRadioCatalog opens the radio catalog overlay and fetches top stations.
+func (m *Model) openRadioCatalog() tea.Cmd {
+	m.radioCatalog = radioCatalogState{
+		visible:   true,
+		loading:   true,
+		favorites: radio.LoadFavorites(),
+	}
+	return fetchRadioTopCmd()
+}
+
 // Init starts the tick timer and requests the terminal size.
 func (m Model) Init() tea.Cmd {
-	if m.luaMgr != nil {
-		m.luaMgr.Emit(luaplugin.EventAppStart, nil)
-	}
 	cmds := []tea.Cmd{tickCmd(), tea.WindowSize()}
-	if cmd := m.terminalTitleCmd(); cmd != nil {
-		cmds = append(cmds, cmd)
-	}
 	if m.provider != nil {
 		cmds = append(cmds, fetchPlaylistsCmd(m.provider))
 	}
@@ -791,188 +656,18 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-var teaTick = tea.Tick
-
 func tickCmd() tea.Cmd {
 	return tickCmdAt(tickFast)
 }
 
 func tickCmdAt(d time.Duration) tea.Cmd {
-	return teaTick(d, func(t time.Time) tea.Msg {
+	return tea.Tick(d, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
 
-func (m *Model) visualizerPlaying() bool {
-	return m.player != nil && m.vis != nil && m.vis.Mode != VisNone &&
-		!m.isOverlayActive() && m.player.IsPlaying() && !m.player.IsPaused()
-}
-
-func (m *Model) visualizerPaused() bool {
-	return m.player != nil && m.vis != nil && m.vis.Mode != VisNone &&
-		!m.isOverlayActive() && m.player.IsPlaying() && m.player.IsPaused()
-}
-
-func (m *Model) visualizerTickContext(now time.Time) visTickContext {
-	sampled := false
-	samplesRead := 0
-	sampledSize := 0
-	cache := map[visAnalysisSpec][]float64{}
-
-	return visTickContext{
-		Now:           now,
-		Playing:       m.visualizerPlaying(),
-		Paused:        m.visualizerPaused(),
-		OverlayActive: m.isOverlayActive(),
-		Analyze: func(spec visAnalysisSpec) []float64 {
-			spec = normalizeAnalysisSpec(spec)
-			if m.player == nil || m.vis == nil || m.vis.Mode == VisNone {
-				return nil
-			}
-			if bands, ok := cache[spec]; ok {
-				return bands
-			}
-			if !sampled || spec.FFTSize > sampledSize {
-				samplesRead = m.player.SamplesInto(m.vis.ensureSampleBuf(spec.FFTSize))
-				sampled = true
-				sampledSize = spec.FFTSize
-			}
-			start := max(0, samplesRead-spec.FFTSize)
-			bands := m.vis.Analyze(m.vis.sampleBuf[start:samplesRead], spec)
-			cache[spec] = bands
-			return bands
-		},
-	}
-}
-
-func (m *Model) tickDelta(now time.Time) time.Duration {
-	dt := m.tickInterval()
-	if !now.IsZero() && !m.lastTickAt.IsZero() {
-		dt = now.Sub(m.lastTickAt)
-	}
-	if dt <= 0 {
-		dt = tickFast
-	}
-	if !now.IsZero() {
-		m.lastTickAt = now
-	}
-	return dt
-}
-
-func advanceTickUnits(counter *int, elapsed *time.Duration, dt, quantum time.Duration) int {
-	if *counter <= 0 {
-		*elapsed = 0
-		return 0
-	}
-	*elapsed += dt
-	if *elapsed < quantum {
-		return 0
-	}
-	steps := int(*elapsed / quantum)
-	if steps > *counter {
-		steps = *counter
-	}
-	*counter -= steps
-	if *counter == 0 {
-		*elapsed = 0
-		return steps
-	}
-	*elapsed -= time.Duration(steps) * quantum
-	return steps
-}
-
-func (m *Model) tickInterval() time.Duration {
-	if m.termTitle.introActive {
-		return tickFast
-	}
-	if m.vis == nil {
-		return tickSlow
-	}
-	return m.vis.TickInterval(m.visualizerTickContext(time.Time{}))
-}
-
-func (m *Model) tickVisualizer(now time.Time) {
-	if m.vis == nil {
-		return
-	}
-	m.vis.Tick(m.visualizerTickContext(now))
-}
-
-func (m Model) refreshVisualizerIfPending() {
-	if m.vis == nil || m.vis.Mode == VisNone || m.activeScreen().hidesVisualizer() || !m.vis.consumeRefresh() {
-		return
-	}
-	m.tickVisualizer(time.Now())
-}
-
-func (m Model) maybeRequestVisualizerRefresh(msg tea.Msg, wasScreen topLevelScreen, wasMode VisMode, wasPlaying, wasPaused bool) {
-	if m.vis == nil {
-		return
-	}
-	if _, ok := msg.(tickMsg); ok {
-		return
-	}
-	screen := m.activeScreen()
-	if screen.hidesVisualizer() || m.vis.Mode == VisNone {
-		return
-	}
-
-	playing := false
-	paused := false
-	if m.player != nil {
-		playing = m.player.IsPlaying()
-		paused = m.player.IsPaused()
-	}
-
-	if wasScreen != screen ||
-		wasMode != m.vis.Mode ||
-		(!wasPlaying && playing) ||
-		(wasPaused && !paused) {
-		m.vis.requestRefresh()
-	}
-}
-
-func (m Model) mainFrameFixedLines(includeTransient bool) int {
-	content := strings.Join(m.mainSections("", includeTransient), "\n")
-	return lipgloss.Height(frameStyle.Render(content))
-}
-
-func (m Model) playlistVisibleLimit(limit int) int {
-	available := m.height - m.mainFrameFixedLines(false)
-	if available < minPlVisible {
-		return minPlVisible
-	}
-	return min(limit, available)
-}
-
-func (m Model) effectivePlaylistVisible() int {
-	available := m.height - m.mainFrameFixedLines(true)
-	if available <= 0 {
-		return 0
-	}
-	if m.plVisible <= 0 {
-		return 0
-	}
-	return min(m.plVisible, available)
-}
-
 // Update handles messages: key presses, ticks, and window resizes.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	wasScreen := m.activeScreen()
-	wasMode := VisNone
-	if m.vis != nil {
-		wasMode = m.vis.Mode
-	}
-	wasPlaying := false
-	wasPaused := false
-	if m.player != nil {
-		wasPlaying = m.player.IsPlaying()
-		wasPaused = m.player.IsPaused()
-	}
-	defer func() {
-		m.maybeRequestVisualizerRefresh(msg, wasScreen, wasMode, wasPlaying, wasPaused)
-	}()
-
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		cmd := m.handleKey(msg)
@@ -984,7 +679,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case autoPlayMsg:
 		if m.playlist.Len() > 0 && !m.player.IsPlaying() {
 			cmd := m.playCurrentTrack()
-			m.notifyAll()
+			m.notifyMPRIS()
 			return m, cmd
 		}
 		return m, nil
@@ -1019,12 +714,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			"x", // placeholder for playlist (1 line)
 			"",
 			m.renderHelp(),
-			m.renderBottomStatus(),
+			m.renderStreamStatus(),
 		}, "\n")
 		probeFrame := frameStyle.Render(probe)
 		fixedLines := lipgloss.Height(probeFrame) - 1 // subtract the 1-line placeholder
 		m.plVisible = max(3, min(maxPlVisible, m.height-fixedLines))
-		return m, m.terminalTitleCmd()
 
 	case coverArtFetchedMsg:
 		if msg.path == m.coverArtPath {
@@ -1042,16 +736,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Grace period: suppress reconnect for a few ticks after seek completes.
 		m.seek.grace = 10
-		m.seek.graceFor = 0
 		if m.mpris != nil {
 			m.mpris.EmitSeeked(m.player.Position().Microseconds())
 		}
 		return m, nil
 
 	case tickMsg:
-		now := time.Time(msg)
-		dt := m.tickDelta(now)
-
 		// Cache expensive player state once per tick so View() render
 		// functions don't re-acquire speaker.Lock() multiple times.
 		if !m.buffering {
@@ -1062,7 +752,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cachedDur = time.Duration(track.DurationSecs) * time.Second
 			m.cachedPos = 0
 		}
-		m.tickVisualizer(now)
 		// Update cover art when the current track changes.
 		if track, _ := m.playlist.Current(); track.Path != m.coverArtPath {
 			m.coverArtPath = track.Path
@@ -1089,16 +778,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Process debounced yt-dlp seek.
 		var seekCmd tea.Cmd
-		if cmd := m.tickSeek(dt); cmd != nil {
+		if cmd := m.tickSeek(); cmd != nil {
 			seekCmd = cmd
 		}
 		// Expire temporary status messages.
-		if !m.status.expiresAt.IsZero() && !now.Before(m.status.expiresAt) {
-			m.status.Clear()
+		if m.status.ttl > 0 {
+			m.status.ttl--
+			if m.status.ttl == 0 {
+				m.status.text = ""
+			}
 		}
-		m.tickPendingSpeedSave(dt)
 		// Decrement seek grace period.
-		advanceTickUnits(&m.seek.grace, &m.seek.graceFor, dt, tickFast)
+		if m.seek.grace > 0 {
+			m.seek.grace--
+		}
 		// Surface stream errors (e.g., connection drops) and auto-reconnect streams.
 		// Suppress during yt-dlp seek and grace period — killing the old pipeline
 		// triggers a transient error that can persist for a few ticks.
@@ -1109,7 +802,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Schedule reconnect with exponential backoff: 1s, 2s, 4s, 8s, 16s
 				if m.reconnect.at.IsZero() {
 					delay := time.Second << m.reconnect.attempts
-					m.reconnect.at = now.Add(delay)
+					m.reconnect.at = time.Now().Add(delay)
 					m.reconnect.attempts++
 					m.err = fmt.Errorf("Reconnecting in %s...", delay)
 				}
@@ -1122,7 +815,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Poll ICY stream title for live radio display.
 		if title := m.player.StreamTitle(); title != "" && title != m.streamTitle {
 			m.streamTitle = title
-			m.notifyAll()
+			m.notifyMPRIS()
 			// Auto-fetch lyrics when the stream song changes and lyrics overlay is open.
 			if m.lyrics.visible && !m.lyrics.loading {
 				if artist, song, ok := strings.Cut(title, " - "); ok {
@@ -1138,14 +831,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		m.network.sampleFor += dt
-		if m.network.sampleFor >= time.Second {
-			m.notifyAll()
+		// Update network throughput every ~1 second (20 ticks at 50ms).
+		m.network.lastTick++
+		if m.network.lastTick >= 20 {
+			m.notifyMPRIS()
 			downloaded, _ := m.player.StreamBytes()
 			delta := downloaded - m.network.lastBytes
 			if delta > 0 {
 				// Exponential moving average for smooth display.
-				instant := float64(delta) / m.network.sampleFor.Seconds() // bytes/sec
+				instant := float64(delta) / (float64(m.network.lastTick) * 0.05) // bytes/sec
 				if m.network.speed == 0 {
 					m.network.speed = instant
 				} else {
@@ -1155,14 +849,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.network.speed = 0
 			}
 			m.network.lastBytes = downloaded
-			m.network.sampleFor = 0
+			m.network.lastTick = 0
 		}
 		// Fire scheduled reconnect when the timer expires.
-		if !m.reconnect.at.IsZero() && now.After(m.reconnect.at) {
+		if !m.reconnect.at.IsZero() && time.Now().After(m.reconnect.at) {
 			m.reconnect.at = time.Time{}
 			m.player.Stop()
 			if track, idx := m.playlist.Current(); idx >= 0 {
-				return m, tea.Batch(m.playTrack(track), tickCmdAt(tickFast))
+				return m, tea.Batch(m.playTrack(track), tickCmd())
 			}
 		}
 		var cmds []tea.Cmd
@@ -1205,7 +899,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.nowPlaying(newTrack)
 			}
 			cmds = append(cmds, m.preloadNext())
-			m.notifyAll()
+			m.notifyMPRIS()
 		}
 		// Check if gapless drained (end of playlist, no preloaded next).
 		// Skip if already buffering a yt-dlp download to avoid advancing
@@ -1221,12 +915,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// replay while waiting for a yt-dlp pipe chain to spin up.
 			m.player.Stop()
 			cmds = append(cmds, m.nextTrack())
-			m.notifyAll()
+			m.notifyMPRIS()
 		}
 		if m.player.IsPlaying() && !m.player.IsPaused() {
-			if now.Sub(m.titleLastScroll) >= 200*time.Millisecond {
+			if time.Since(m.titleLastScroll) >= 200*time.Millisecond {
 				m.titleOff++
-				m.titleLastScroll = now
+				m.titleLastScroll = time.Now()
 			}
 		}
 		// Retry deferred stream preload: preloadNext() returns nil (defers) when
@@ -1240,21 +934,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		m.advanceTerminalTitle()
-		if cmd := m.terminalTitleCmd(); cmd != nil {
-			cmds = append(cmds, cmd)
+		// Use fast ticks only when audio is actively playing with a live
+		// visualizer. Paused/stopped playback has no new audio samples, so
+		// slow ticks are sufficient and save CPU/GPU repaints.
+		interval := tickSlow
+		if m.vis.Mode != VisNone && !m.isOverlayActive() &&
+			m.player.IsPlaying() && !m.player.IsPaused() {
+			interval = tickFast
 		}
-		cmds = append(cmds, tickCmdAt(m.tickInterval()))
+		cmds = append(cmds, tickCmdAt(interval))
 		return m, tea.Batch(cmds...)
 
 	case []playlist.PlaylistInfo:
 		m.providerLists = msg
 		m.provLoading = false
-		// Start loading catalog stations when the radio provider is active.
-		if _, ok := m.provider.(*radio.Provider); ok && !m.radioBatch.loading && !m.radioBatch.done {
-			m.radioBatch.loading = true
-			return m, fetchRadioBatchCmd(m.radioBatch.offset, radioBatchSize)
-		}
 		return m, nil
 
 	case tracksLoadedMsg:
@@ -1271,7 +964,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.provLoading = false
 		if m.playlist.Len() > 0 && !wasPlaying {
 			cmd := m.playCurrentTrack()
-			m.notifyAll()
+			m.notifyMPRIS()
 			return m, cmd
 		}
 		return m, nil
@@ -1313,45 +1006,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.navBrowser.screen = navBrowseScreenTracks
 		return m, nil
 
-	case radioBatchMsg:
-		m.radioBatch.loading = false
+	case radioCatalogLoadedMsg:
+		m.radioCatalog.loading = false
 		if msg.err != nil {
-			m.radioBatch.done = true
-			m.status.Show("Catalog load failed", statusTTLDefault)
-			return m, nil
+			m.radioCatalog.err = msg.err.Error()
+		} else {
+			m.radioCatalog.stations = msg.stations
+			m.radioCatalog.err = ""
 		}
-		if len(msg.stations) == 0 {
-			m.radioBatch.done = true
-			return m, nil
-		}
-		if rp, ok := m.provider.(*radio.Provider); ok {
-			rp.AppendCatalog(msg.stations)
-			if lists, err := rp.Playlists(); err == nil {
-				m.providerLists = lists
-			}
-		}
-		m.radioBatch.offset += len(msg.stations)
-		if len(msg.stations) < radioBatchSize {
-			m.radioBatch.done = true
-		}
-		return m, nil
-
-	case radioProvSearchMsg:
-		m.provLoading = false
-		if rp, ok := m.provider.(*radio.Provider); ok {
-			if msg.err != nil {
-				m.status.Show("Search failed", statusTTLDefault)
-			} else {
-				rp.SetSearchResults(msg.stations)
-				if lists, err := rp.Playlists(); err == nil {
-					m.providerLists = lists
-				}
-				m.provCursor = 0
-				if len(msg.stations) == 0 {
-					m.status.Show("No stations found", statusTTLDefault)
-				}
-			}
-		}
+		m.radioCatalog.cursor = 0
+		m.radioCatalog.scroll = 0
 		return m, nil
 
 	case ytdlBatchMsg:
@@ -1362,7 +1026,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ytdlBatch.loading = false
 		if msg.err != nil {
 			m.ytdlBatch.done = true
-			m.status.Showf(statusTTLBatch, "Radio batch load failed: %v", msg.err)
+			m.status.text = fmt.Sprintf("Radio batch load failed: %v", msg.err)
+			m.status.ttl = statusTTLBatch
 			return m, nil
 		}
 		if len(msg.tracks) == 0 {
@@ -1383,18 +1048,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.feedLoading = false
 		if len(msg.tracks) > 0 {
 			m.playlist.Add(msg.tracks...)
-			m.status.Showf(statusTTLDefault, "Loaded %d track(s)", len(msg.tracks))
-		} else {
-			m.status.Show("No tracks found at URL.", statusTTLDefault)
-		}
-		if len(msg.tracks) > 0 {
+			m.status.text = fmt.Sprintf("Loaded %d track(s)", len(msg.tracks))
+			m.status.ttl = statusTTLDefault
 			// Set up incremental loading for YouTube Radio playlists.
 			// The source URLs are carried in the message so we don't
 			// need to re-scan pendingURLs (which misses interactive loads).
 			batchCmd := m.initYTDLBatch(msg.urls)
 			if msg.autoPlay && m.playlist.Len() > 0 && !m.player.IsPlaying() {
 				playCmd := m.playCurrentTrack()
-				m.notifyAll()
+				m.notifyMPRIS()
 				if batchCmd != nil {
 					return m, tea.Batch(playCmd, batchCmd)
 				}
@@ -1403,24 +1065,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if batchCmd != nil {
 				return m, batchCmd
 			}
+		} else {
+			m.status.text = "No tracks found at URL."
+			m.status.ttl = statusTTLDefault
 		}
 		return m, nil
 
 	case netSearchLoadedMsg:
-		if len(msg) == 0 {
-			m.status.Show("No tracks found online.", statusTTLDefault)
-			return m, nil
-		}
-		startIdx := m.playlist.Len()
-		m.playlist.Add(msg...)
-		for i := startIdx; i < m.playlist.Len(); i++ {
-			m.playlist.Queue(i)
-		}
-		m.status.Showf(statusTTLDefault, "Added to Queue: %s", msg[0].DisplayName())
-		if !m.player.IsPlaying() {
-			cmd := m.playCurrentTrack()
-			m.notifyAll()
-			return m, cmd
+		if len(msg) > 0 {
+			startIdx := m.playlist.Len()
+			m.playlist.Add(msg...)
+			for i := startIdx; i < m.playlist.Len(); i++ {
+				m.playlist.Queue(i)
+			}
+			m.status.text = fmt.Sprintf("Added to Queue: %s", msg[0].DisplayName())
+			m.status.ttl = statusTTLDefault
+			if !m.player.IsPlaying() {
+
+				cmd := m.playCurrentTrack()
+				m.notifyMPRIS()
+				return m, cmd
+			}
+		} else {
+			m.status.text = "No tracks found online."
+			m.status.ttl = statusTTLDefault
 		}
 		return m, nil
 
@@ -1435,7 +1103,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case fbTracksResolvedMsg:
 		if len(msg.tracks) == 0 {
-			m.status.Show("No audio files found", statusTTLDefault)
+			m.status.text = "No audio files found"
+			m.status.ttl = statusTTLDefault
 			return m, nil
 		}
 		if msg.replace {
@@ -1449,13 +1118,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.playlist.Add(msg.tracks...)
 		}
 		m.focus = focusPlaylist
-		m.status.Showf(statusTTLDefault, "Added %d track(s)", len(msg.tracks))
+		m.status.text = fmt.Sprintf("Added %d track(s)", len(msg.tracks))
+		m.status.ttl = statusTTLDefault
 		if !m.player.IsPlaying() && m.playlist.Len() > 0 {
 			if msg.replace {
 				m.playlist.SetIndex(0)
 			}
 			cmd := m.playCurrentTrack()
-			m.notifyAll()
+			m.notifyMPRIS()
 			return m, cmd
 		}
 		return m, nil
@@ -1470,7 +1140,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reconnect.at = time.Time{}
 			m.applyResume()
 		}
-		m.notifyAll()
+		m.notifyMPRIS()
 		return m, m.preloadNext()
 
 	case streamPreloadedMsg:
@@ -1478,12 +1148,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ytdlSavedMsg:
-		m.save.finishDownload()
 		if msg.err != nil {
-			m.status.Showf(statusTTLMedium, "Download failed: %s", msg.err)
+			m.status.text = fmt.Sprintf("Download failed: %s", msg.err)
 		} else {
-			m.status.Showf(statusTTLMedium, "Saved to %s", msg.path)
+			m.status.text = fmt.Sprintf("Saved to %s", msg.path)
 		}
+		m.status.ttl = statusTTLMedium
 		return m, nil
 
 	case ytdlResolvedMsg:
@@ -1496,7 +1166,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.playlist.SetTrack(msg.index, msg.track)
 		// Play the local file (seekable).
 		cmd := m.playTrack(msg.track)
-		m.notifyAll()
+		m.notifyMPRIS()
 		return m, cmd
 
 	case error:
@@ -1512,51 +1182,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.buffering = false
 		return m, nil
 
-	case spotSearchResultsMsg:
-		m.spotSearch.loading = false
-		if msg.err != nil {
-			m.spotSearch.err = msg.err.Error()
-			return m, nil
-		}
-		m.spotSearch.results = msg.tracks
-		m.spotSearch.cursor = 0
-		m.spotSearch.screen = spotSearchResults
-		if len(msg.tracks) == 0 {
-			m.spotSearch.err = "No results found"
-		}
-		return m, nil
-
-	case spotPlaylistsMsg:
-		m.spotSearch.loading = false
-		if msg.err != nil {
-			m.spotSearch.err = msg.err.Error()
-			return m, nil
-		}
-		m.spotSearch.playlists = msg.playlists
-		m.spotSearch.cursor = 0
-		m.spotSearch.screen = spotSearchPlaylist
-		return m, nil
-
-	case spotAddedMsg:
-		m.spotSearch.loading = false
-		if msg.err != nil {
-			m.spotSearch.err = "Add failed: " + msg.err.Error()
-			return m, nil
-		}
-		m.status.Showf(statusTTLDefault, "Added to %q", msg.name)
-		m.spotSearch.visible = false
-		return m, nil
-
-	case spotCreatedMsg:
-		m.spotSearch.loading = false
-		if msg.err != nil {
-			m.spotSearch.err = "Create failed: " + msg.err.Error()
-			return m, nil
-		}
-		m.status.Showf(statusTTLDefault, "Created %q & added track", msg.name)
-		m.spotSearch.visible = false
-		return m, nil
-
 	case provAuthDoneMsg:
 		if msg.err != nil {
 			m.err = msg.err
@@ -1570,30 +1195,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case mpris.InitMsg:
 		m.mpris = msg.Svc
-		m.notifyAll()
+		m.notifyMPRIS()
 		return m, nil
 
 	case mpris.PlayPauseMsg:
 		cmd := m.togglePlayPause()
-		m.notifyAll()
+		m.notifyMPRIS()
 		return m, cmd
 
 	case mpris.NextMsg:
 		m.scrobbleCurrent()
 		cmd := m.nextTrack()
-		m.notifyAll()
+		m.notifyMPRIS()
 		return m, cmd
 
 	case mpris.PrevMsg:
 		m.scrobbleCurrent()
 		cmd := m.prevTrack()
-		m.notifyAll()
+		m.notifyMPRIS()
 		return m, cmd
 
 	case mpris.SeekMsg:
 		offset := time.Duration(msg.Offset) * time.Microsecond
 		m.player.Seek(offset)
-		m.notifyAll()
+		m.notifyMPRIS()
 		if m.mpris != nil {
 			m.mpris.EmitSeeked(m.player.Position().Microseconds())
 		}
@@ -1602,7 +1227,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mpris.SetPositionMsg:
 		pos := time.Duration(msg.Position) * time.Microsecond
 		m.player.Seek(pos - m.player.Position())
-		m.notifyAll()
+		m.notifyMPRIS()
 		if m.mpris != nil {
 			m.mpris.EmitSeeked(m.player.Position().Microseconds())
 		}
@@ -1610,23 +1235,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case mpris.SetVolumeMsg:
 		m.player.SetVolume(mpris.LinearToDb(msg.Volume))
-		m.notifyAll()
+		m.notifyMPRIS()
 		return m, nil
 
 	case mpris.StopMsg:
 		m.player.Stop()
-		m.notifyAll()
+		m.notifyMPRIS()
 		return m, nil
 
 	case mpris.QuitMsg:
-		m.flushPendingSpeedSave()
 		m.player.Close()
 		m.quitting = true
 		return m, tea.Quit
-
-	case SetEQPresetMsg:
-		m.SetEQPreset(msg.Name, msg.Bands)
-		return m, nil
 	}
 
 	return m, nil
@@ -1691,9 +1311,6 @@ func (m *Model) playTrack(track playlist.Track) tea.Cmd {
 	m.lyrics.scroll = 0
 	m.seek.active = false
 	m.seek.timer = 0
-	m.seek.timerFor = 0
-	m.seek.grace = 0
-	m.seek.graceFor = 0
 	var fetchCmd tea.Cmd
 	if m.lyrics.visible && track.Artist != "" && track.Title != "" {
 		m.lyrics.loading = true
@@ -1837,11 +1454,8 @@ func (m *Model) defaultPlVisible() int {
 	probe := strings.Join([]string{
 		m.renderHeaderBlock(),
 		"",
-		m.renderControls(),
-		m.renderProviderPill(),
-		"",
-		m.renderPlaylistHeader(),
-		"x", "", m.renderHelp(), m.renderBottomStatus(),
+		m.renderControls(), "", m.renderPlaylistHeader(),
+		"x", "", m.renderHelp(), m.renderStreamStatus(),
 	}, "\n")
 	fixedLines := lipgloss.Height(frameStyle.Render(probe)) - 1
 	return max(3, min(maxPlVisible, m.height-fixedLines))
@@ -1855,101 +1469,38 @@ func (m *Model) adjustScroll() {
 	if len(tracks) == 0 {
 		return
 	}
-	visible := m.effectivePlaylistVisible()
-	if visible <= 0 {
+	// Scrolling up: cursor above the scroll window.
+	if m.plCursor < m.plScroll {
+		m.plScroll = m.plCursor
 		return
 	}
-	m.plScroll = m.playlistScroll(visible)
-}
-
-func (m Model) playlistScroll(visible int) int {
-	tracks := m.playlist.Tracks()
-	scroll := max(0, m.plScroll)
-	if scroll >= len(tracks) {
-		scroll = max(0, len(tracks)-1)
+	// Scrolling down: check if cursor is still within the visible area.
+	// Count rendered lines from plScroll up to and including plCursor.
+	lines := renderedLineCount(tracks, m.plScroll, m.plCursor+1)
+	if lines <= m.plVisible {
+		return // cursor is visible, nothing to do
 	}
-	if m.plCursor < scroll {
-		return m.plCursor
-	}
-	lines := renderedLineCount(tracks, scroll, m.plCursor+1)
-	if lines <= visible {
-		return scroll
-	}
-	scroll = m.plCursor
+	// Cursor has scrolled past the visible area. Walk backward from
+	// plCursor to find the scroll offset that fits it on screen.
+	m.plScroll = m.plCursor
 	lines = 1 // the cursor track itself
 	for i := m.plCursor - 1; i >= 0; i-- {
 		add := 1 // track line
 		if tracks[i+1].Album != "" && tracks[i+1].Album != tracks[i].Album {
 			add++ // separator above track i+1
 		}
-		if lines+add > visible {
+		if lines+add > m.plVisible {
 			break
 		}
 		lines += add
-		scroll = i
+		m.plScroll = i
 	}
-	if scroll > 0 && tracks[scroll].Album != "" && tracks[scroll].Album != tracks[scroll-1].Album {
-		if lines+1 > visible {
-			scroll++
+	// Account for separator at the top of the window.
+	if m.plScroll > 0 && tracks[m.plScroll].Album != "" && tracks[m.plScroll].Album != tracks[m.plScroll-1].Album {
+		// There's a separator above plScroll — if it would overflow, bump scroll down.
+		if lines+1 > m.plVisible {
+			m.plScroll++
 		}
-	}
-	return scroll
-}
-
-// notifyAll sends the current playback state to both MPRIS and Lua plugins.
-func (m *Model) notifyAll() {
-	m.notifyMPRIS()
-	m.notifyPlugins()
-}
-
-// notifyPlugins emits a playback state event to Lua plugins.
-func (m *Model) notifyPlugins() {
-	if m.luaMgr == nil || !m.luaMgr.HasHooks() {
-		return
-	}
-	track, _ := m.playlist.Current()
-	artist, title := m.resolveTrackDisplay(track)
-	status := "stopped"
-	if m.player.IsPlaying() {
-		if m.player.IsPaused() {
-			status = "paused"
-		} else {
-			status = "playing"
-		}
-	}
-	data := trackToMap(track)
-	data["status"] = status
-	data["title"] = title
-	data["artist"] = artist
-	data["position"] = m.player.Position().Seconds()
-	m.luaMgr.Emit(luaplugin.EventPlaybackState, data)
-}
-
-// resolveTrackDisplay returns the display artist and title, applying ICY
-// stream title override for radio streams.
-func (m *Model) resolveTrackDisplay(track playlist.Track) (artist, title string) {
-	artist, title = track.Artist, track.Title
-	if m.streamTitle != "" && track.Stream {
-		if a, t, ok := strings.Cut(m.streamTitle, " - "); ok {
-			artist, title = a, t
-		} else {
-			title = m.streamTitle
-		}
-	}
-	return
-}
-
-// trackToMap builds a metadata map from a track for Lua plugin events.
-func trackToMap(track playlist.Track) map[string]any {
-	return map[string]any{
-		"title":    track.Title,
-		"artist":   track.Artist,
-		"album":    track.Album,
-		"genre":    track.Genre,
-		"year":     track.Year,
-		"path":     track.Path,
-		"duration": track.DurationSecs,
-		"stream":   track.Stream,
 	}
 }
 
@@ -1968,15 +1519,23 @@ func (m *Model) notifyMPRIS() {
 		}
 	}
 	track, _ := m.playlist.Current()
-	artist, title := m.resolveTrackDisplay(track)
 	info := mpris.TrackInfo{
-		Title:       title,
-		Artist:      artist,
+		Title:       track.Title,
+		Artist:      track.Artist,
 		Album:       track.Album,
 		Genre:       track.Genre,
 		TrackNumber: track.TrackNumber,
 		URL:         track.Path,
 		Length:      m.player.Duration().Microseconds(),
+	}
+	// Override with ICY stream title for radio streams (format: "Artist - Title").
+	if m.streamTitle != "" && track.Stream {
+		if artist, title, ok := strings.Cut(m.streamTitle, " - "); ok {
+			info.Artist = artist
+			info.Title = title
+		} else {
+			info.Title = m.streamTitle
+		}
 	}
 	m.mpris.Update(status, info, m.player.Volume(),
 		m.player.Position().Microseconds(), m.player.Seekable())
@@ -2082,19 +1641,6 @@ func (m *Model) updateSearch() {
 //
 // The call is dispatched in a goroutine so it never blocks the UI.
 func (m *Model) maybeScrobble(track playlist.Track, elapsed, duration time.Duration) {
-	// Emit scrobble event to Lua plugins for all tracks (not just Navidrome).
-	if m.luaMgr != nil && m.luaMgr.HasHooks() {
-		dur := duration
-		if dur <= 0 {
-			dur = time.Duration(track.DurationSecs) * time.Second
-		}
-		if dur > 0 && elapsed >= dur/2 {
-			data := trackToMap(track)
-			data["played_secs"] = elapsed.Seconds()
-			m.luaMgr.Emit(luaplugin.EventTrackScrobble, data)
-		}
-	}
-
 	if m.navClient == nil || !m.navScrobbleEnabled {
 		return
 	}
@@ -2117,10 +1663,6 @@ func (m *Model) maybeScrobble(track playlist.Track, elapsed, duration time.Durat
 
 // nowPlaying fires a now-playing notification for the given track if configured.
 func (m *Model) nowPlaying(track playlist.Track) {
-	if m.luaMgr != nil && m.luaMgr.HasHooks() {
-		m.luaMgr.Emit(luaplugin.EventTrackChange, trackToMap(track))
-	}
-
 	if m.navClient == nil || !m.navScrobbleEnabled || track.NavidromeID == "" {
 		return
 	}
