@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"image"
 	"image/color"
@@ -52,28 +53,131 @@ func decodeCoverArt(data []byte) image.Image {
 	return img
 }
 
-// quadrantChars maps a 4-bit pixel pattern to a Unicode block character.
+// CoverArtMode selects the Unicode block character set used to render album art.
+type CoverArtMode int
+
+const (
+	CoverArtSextant  CoverArtMode = iota // 2×3 pixels/cell — Unicode 13 sextant blocks (default)
+	CoverArtQuadrant                      // 2×2 pixels/cell — Unicode quadrant blocks
+	CoverArtHalfBlock                     // 1×2 pixels/cell — Unicode half blocks
+	CoverArtBitmap                        // Kitty terminal graphics protocol
+)
+
+func (m CoverArtMode) String() string {
+	switch m {
+	case CoverArtQuadrant:
+		return "quadrant"
+	case CoverArtHalfBlock:
+		return "half-block"
+	case CoverArtBitmap:
+		return "bitmap"
+	default:
+		return "sextant"
+	}
+}
+
+// coverArtPixelSize returns the pixel dimensions the source image must be
+// scaled to before rendering with the given mode and cell dimensions.
+func coverArtPixelSize(mode CoverArtMode, cols, rows int) (w, h int) {
+	switch mode {
+	case CoverArtHalfBlock:
+		return cols, rows * 2
+	case CoverArtQuadrant:
+		return cols * 2, rows * 2
+	case CoverArtBitmap:
+		// Compute a square pixel dimension from the cell width.
+		// Cells are ~2:1 (h:w), so height needs 1/2 the per-cell pixels
+		// to produce equal pixel dimensions across the full grid.
+		const pxPerCell = 16
+		pixelW := cols * pxPerCell
+		return pixelW, pixelW
+	default: // CoverArtSextant
+		return cols * 2, rows * 3
+	}
+}
+
+// quadrantChars maps a 4-bit pixel pattern to a Unicode quadrant block character.
 // Bits: 3=top-left, 2=top-right, 1=bottom-left, 0=bottom-right.
-// A set bit means the pixel belongs to the foreground color.
 var quadrantChars = [16]rune{
 	' ', '▗', '▖', '▄', '▝', '▐', '▞', '▟',
 	'▘', '▚', '▌', '▙', '▀', '▜', '▛', '█',
 }
 
-// renderCoverArt renders a pre-scaled RGBA image (width*2 × height*2 pixels)
-// as width×height terminal cells using Unicode quadrant block characters with
-// ANSI true-color sequences. Each cell encodes a 2×2 pixel block.
+// sextantChars maps a 6-bit pixel pattern to a Unicode sextant character.
+// Bits: 0=top-left, 1=top-right, 2=mid-left, 3=mid-right, 4=bot-left, 5=bot-right.
+// Patterns 0/63 use space/█; patterns 21/42 reuse ▌/▐ (skipped in Unicode 13 range).
+// The remaining 60 patterns map to U+1FB00–U+1FB3B.
+var sextantChars = func() [64]rune {
+	var t [64]rune
+	t[0] = ' '
+	t[21] = '▌' // left column: bits 0+2+4
+	t[42] = '▐' // right column: bits 1+3+5
+	t[63] = '█'
+	for p := 1; p <= 62; p++ {
+		if p == 21 || p == 42 {
+			continue
+		}
+		skips := 0
+		if p > 21 {
+			skips++
+		}
+		if p > 42 {
+			skips++
+		}
+		t[p] = rune(0x1FB00 + p - 1 - skips)
+	}
+	return t
+}()
+
+// renderCoverArt renders a pre-scaled RGBA image as width×height terminal cells
+// using the given mode's block characters and ANSI true-color sequences.
+// The image must have been scaled to coverArtPixelSize(mode, width, height).
 // Returns an empty string if scaled is nil or dimensions are invalid.
-func renderCoverArt(scaled *image.RGBA, width, height int) string {
+func renderCoverArt(scaled *image.RGBA, width, height int, mode CoverArtMode) string {
 	if scaled == nil || width <= 0 || height <= 0 {
 		return ""
 	}
+	// In non-bitmap modes, clear any lingering Kitty image from a previous
+	// bitmap render. The delete-all APC is position-independent and harmless
+	// when no image is present.
+	const kittyDeleteAll = "\x1b_Ga=d,d=A,q=2\x1b\\"
 
+	switch mode {
+	case CoverArtHalfBlock:
+		return kittyDeleteAll + renderHalfBlockArt(scaled, width, height)
+	case CoverArtQuadrant:
+		return kittyDeleteAll + renderQuadrantArt(scaled, width, height)
+	case CoverArtBitmap:
+		return renderBitmapArt(scaled, width, height)
+	default:
+		return kittyDeleteAll + renderSextantArt(scaled, width, height)
+	}
+}
+
+// renderHalfBlockArt renders using ▀ with fg=top pixel, bg=bottom pixel per cell.
+// Input image must be width × height*2 pixels.
+func renderHalfBlockArt(scaled *image.RGBA, width, height int) string {
 	rows := make([]string, height)
 	for row := range height {
 		var sb strings.Builder
 		for col := range width {
-			// Sample the 2×2 pixel block for this cell.
+			r0, g0, b0, _ := scaled.At(col, row*2).RGBA()
+			r1, g1, b1, _ := scaled.At(col, row*2+1).RGBA()
+			fmt.Fprintf(&sb, "\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm▀\x1b[0m",
+				r0>>8, g0>>8, b0>>8, r1>>8, g1>>8, b1>>8)
+		}
+		rows[row] = sb.String()
+	}
+	return strings.Join(rows, "\n")
+}
+
+// renderQuadrantArt renders using Unicode quadrant block characters (2×2 pixels/cell).
+// Input image must be width*2 × height*2 pixels.
+func renderQuadrantArt(scaled *image.RGBA, width, height int) string {
+	rows := make([]string, height)
+	for row := range height {
+		var sb strings.Builder
+		for col := range width {
 			var px [4][3]uint32 // [tl, tr, bl, br][r, g, b]
 			for i, c := range [4][2]int{
 				{col*2, row*2}, {col*2 + 1, row*2},
@@ -82,58 +186,266 @@ func renderCoverArt(scaled *image.RGBA, width, height int) string {
 				r, g, b, _ := scaled.At(c[0], c[1]).RGBA()
 				px[i] = [3]uint32{r >> 8, g >> 8, b >> 8}
 			}
-
-			// Assign each pixel to fg (1) or bg (0) by comparing to mean luma.
-			var meanLuma float64
-			for _, p := range px {
-				meanLuma += 0.2126*float64(p[0]) + 0.7152*float64(p[1]) + 0.0722*float64(p[2])
-			}
-			meanLuma /= 4
-
-			pattern := 0
-			for i, p := range px {
-				luma := 0.2126*float64(p[0]) + 0.7152*float64(p[1]) + 0.0722*float64(p[2])
-				if luma >= meanLuma {
-					pattern |= 1 << (3 - i)
-				}
-			}
-
-			// Average the colors within each group.
-			var fgR, fgG, fgB, fgN uint32
-			var bgR, bgG, bgB, bgN uint32
-			for i, p := range px {
-				if (pattern>>(3-i))&1 == 1 {
-					fgR += p[0]; fgG += p[1]; fgB += p[2]; fgN++
-				} else {
-					bgR += p[0]; bgG += p[1]; bgB += p[2]; bgN++
-				}
-			}
-			if fgN > 0 {
-				fgR /= fgN; fgG /= fgN; fgB /= fgN
-			}
-			if bgN > 0 {
-				bgR /= bgN; bgG /= bgN; bgB /= bgN
-			}
-			// Degenerate cases: copy the defined group to the undefined one.
-			if fgN == 0 {
-				fgR, fgG, fgB = bgR, bgG, bgB
-			}
-			if bgN == 0 {
-				bgR, bgG, bgB = fgR, fgG, fgB
-			}
-
+			fgR, fgG, fgB, bgR, bgG, bgB, char := assignFgBg4(px, quadrantChars[:])
 			fmt.Fprintf(&sb, "\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm%c\x1b[0m",
-				fgR, fgG, fgB, bgR, bgG, bgB, quadrantChars[pattern])
+				fgR, fgG, fgB, bgR, bgG, bgB, char)
 		}
 		rows[row] = sb.String()
 	}
-
 	return strings.Join(rows, "\n")
 }
 
-// scaleImageLanczos scales src to width×height using a separable Lanczos3
-// filter (two passes: horizontal then vertical).
-func scaleImageLanczos(src image.Image, width, height int) *image.RGBA {
+// renderSextantArt renders using Unicode sextant block characters (2×3 pixels/cell).
+// Input image must be width*2 × height*3 pixels.
+func renderSextantArt(scaled *image.RGBA, width, height int) string {
+	rows := make([]string, height)
+	for row := range height {
+		var sb strings.Builder
+		for col := range width {
+			var px [6][3]uint32 // [tl, tr, ml, mr, bl, br][r, g, b]
+			for i, c := range [6][2]int{
+				{col*2, row*3}, {col*2 + 1, row*3},
+				{col*2, row*3 + 1}, {col*2 + 1, row*3 + 1},
+				{col*2, row*3 + 2}, {col*2 + 1, row*3 + 2},
+			} {
+				r, g, b, _ := scaled.At(c[0], c[1]).RGBA()
+				px[i] = [3]uint32{r >> 8, g >> 8, b >> 8}
+			}
+			fgR, fgG, fgB, bgR, bgG, bgB, char := assignFgBg6(px, sextantChars[:])
+			fmt.Fprintf(&sb, "\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm%c\x1b[0m",
+				fgR, fgG, fgB, bgR, bgG, bgB, char)
+		}
+		rows[row] = sb.String()
+	}
+	return strings.Join(rows, "\n")
+}
+
+// renderBitmapArt transmits the image using the Kitty terminal graphics protocol
+// and returns a single-line string that occupies cols×rows cells in the layout.
+// Rows 1+ of the returned slice are empty — the Kitty image persists over them.
+// Requires a Kitty-compatible terminal (e.g. kitty, WezTerm, Ghostty).
+func renderBitmapArt(scaled *image.RGBA, cols, rows int) string {
+	// Encode raw RGBA pixels as base64.
+	encoded := base64.StdEncoding.EncodeToString(scaled.Pix)
+	b := scaled.Bounds()
+
+	var sb strings.Builder
+
+	// Delete any previously placed image to prevent stacking on redraws.
+	sb.WriteString("\x1b_Ga=d,d=A,q=2\x1b\\")
+
+	// Transmit in chunks of ≤4096 base64 bytes as required by the protocol.
+	const chunkSize = 4096
+	for i := 0; i < len(encoded); i += chunkSize {
+		end := min(i+chunkSize, len(encoded))
+		more := 1
+		if end == len(encoded) {
+			more = 0
+		}
+		if i == 0 {
+			// First chunk carries all display parameters:
+			//   f=32  → raw RGBA pixels
+			//   s,v   → source pixel dimensions
+			//   c,r   → display size in terminal cells (Kitty scales to fit)
+			//   C=1   → do not move cursor after placing (we advance manually)
+			//   q=2   → suppress terminal responses
+			fmt.Fprintf(&sb, "\x1b_Ga=T,f=32,s=%d,v=%d,c=%d,r=%d,C=1,q=2,m=%d;%s\x1b\\",
+				b.Dx(), b.Dy(), cols, rows, more, encoded[i:end])
+		} else {
+			fmt.Fprintf(&sb, "\x1b_Gm=%d,q=2;%s\x1b\\", more, encoded[i:end])
+		}
+	}
+
+	// The Kitty image is an overlay; just move to the next line so the
+	// surrounding layout stays flush at the left margin.
+	sb.WriteByte('\n')
+
+	// Return as the first of `rows` lines; the rest are empty so Bubbletea does
+	// not write over the image area on subsequent rows.
+	lines := make([]string, rows)
+	lines[0] = sb.String()
+	return strings.Join(lines, "\n")
+}
+
+// assignFgBg4 assigns 4 pixels to fg/bg by luma, averages each group's color,
+// and returns the fg/bg RGB values and the character from chars[pattern].
+// Bit i set means pixel i is foreground; bit ordering is MSB-first (bit 3-i).
+func assignFgBg4(px [4][3]uint32, chars []rune) (fgR, fgG, fgB, bgR, bgG, bgB uint32, ch rune) {
+	var meanLuma float64
+	for _, p := range px {
+		meanLuma += luma(p)
+	}
+	meanLuma /= 4
+	pattern := 0
+	for i, p := range px {
+		if luma(p) >= meanLuma {
+			pattern |= 1 << (3 - i)
+		}
+	}
+	fgR, fgG, fgB, bgR, bgG, bgB = groupColors4(px, pattern)
+	return fgR, fgG, fgB, bgR, bgG, bgB, chars[pattern]
+}
+
+// assignFgBg6 assigns 6 pixels to fg/bg by luma, averages each group's color,
+// and returns the fg/bg RGB values and the character from chars[pattern].
+// Bit i set means pixel i is foreground.
+func assignFgBg6(px [6][3]uint32, chars []rune) (fgR, fgG, fgB, bgR, bgG, bgB uint32, ch rune) {
+	var meanLuma float64
+	for _, p := range px {
+		meanLuma += luma(p)
+	}
+	meanLuma /= 6
+	pattern := 0
+	for i, p := range px {
+		if luma(p) >= meanLuma {
+			pattern |= 1 << i
+		}
+	}
+	fgR, fgG, fgB, bgR, bgG, bgB = groupColors6(px, pattern)
+	return fgR, fgG, fgB, bgR, bgG, bgB, chars[pattern]
+}
+
+func luma(p [3]uint32) float64 {
+	return 0.2126*float64(p[0]) + 0.7152*float64(p[1]) + 0.0722*float64(p[2])
+}
+
+func groupColors4(px [4][3]uint32, pattern int) (fgR, fgG, fgB, bgR, bgG, bgB uint32) {
+	var fgN, bgN uint32
+	for i, p := range px {
+		if (pattern>>(3-i))&1 == 1 {
+			fgR += p[0]; fgG += p[1]; fgB += p[2]; fgN++
+		} else {
+			bgR += p[0]; bgG += p[1]; bgB += p[2]; bgN++
+		}
+	}
+	if fgN > 0 {
+		fgR /= fgN; fgG /= fgN; fgB /= fgN
+	}
+	if bgN > 0 {
+		bgR /= bgN; bgG /= bgN; bgB /= bgN
+	}
+	if fgN == 0 {
+		fgR, fgG, fgB = bgR, bgG, bgB
+	}
+	if bgN == 0 {
+		bgR, bgG, bgB = fgR, fgG, fgB
+	}
+	return
+}
+
+func groupColors6(px [6][3]uint32, pattern int) (fgR, fgG, fgB, bgR, bgG, bgB uint32) {
+	var fgN, bgN uint32
+	for i, p := range px {
+		if (pattern>>i)&1 == 1 {
+			fgR += p[0]; fgG += p[1]; fgB += p[2]; fgN++
+		} else {
+			bgR += p[0]; bgG += p[1]; bgB += p[2]; bgN++
+		}
+	}
+	if fgN > 0 {
+		fgR /= fgN; fgG /= fgN; fgB /= fgN
+	}
+	if bgN > 0 {
+		bgR /= bgN; bgG /= bgN; bgB /= bgN
+	}
+	if fgN == 0 {
+		fgR, fgG, fgB = bgR, bgG, bgB
+	}
+	if bgN == 0 {
+		bgR, bgG, bgB = fgR, fgG, fgB
+	}
+	return
+}
+
+// ScaleMode selects the resampling filter used when scaling album art.
+type ScaleMode int
+
+const (
+	ScaleLanczos  ScaleMode = iota // Lanczos3 — sharpest, slight ringing (default)
+	ScaleBicubic                    // Bicubic (Keys a=-0.5) — smooth, no ringing
+	ScaleBilinear                   // Bilinear — fast, softer
+	ScaleNearest                    // Nearest-neighbor — pixelated / retro
+)
+
+func (s ScaleMode) String() string {
+	switch s {
+	case ScaleBicubic:
+		return "bicubic"
+	case ScaleBilinear:
+		return "bilinear"
+	case ScaleNearest:
+		return "nearest"
+	default:
+		return "lanczos"
+	}
+}
+
+// scaleImage scales src to width×height using the requested filter.
+func scaleImage(src image.Image, width, height int, mode ScaleMode) *image.RGBA {
+	switch mode {
+	case ScaleNearest:
+		return scaleImageNearest(src, width, height)
+	case ScaleBilinear:
+		return scaleImageSeparable(src, width, height, kernelBilinear, 1)
+	case ScaleBicubic:
+		return scaleImageSeparable(src, width, height, kernelBicubic, 2)
+	default: // ScaleLanczos
+		return scaleImageSeparable(src, width, height, kernelLanczos3, 3)
+	}
+}
+
+func kernelLanczos3(x float64) float64 {
+	const a = 3
+	if x < 0 {
+		x = -x
+	}
+	if x == 0 {
+		return 1
+	}
+	if x >= a {
+		return 0
+	}
+	px := math.Pi * x
+	return a * math.Sin(px) * math.Sin(px/a) / (px * px)
+}
+
+func kernelBicubic(x float64) float64 {
+	const a = -0.5
+	if x < 0 {
+		x = -x
+	}
+	if x < 1 {
+		return (a+2)*x*x*x - (a+3)*x*x + 1
+	}
+	if x < 2 {
+		return a*x*x*x - 5*a*x*x + 8*a*x - 4*a
+	}
+	return 0
+}
+
+func kernelBilinear(x float64) float64 {
+	if x < 0 {
+		x = -x
+	}
+	if x < 1 {
+		return 1 - x
+	}
+	return 0
+}
+
+func clampU8(v float64) uint8 {
+	if v <= 0 {
+		return 0
+	}
+	if v >= 255 {
+		return 255
+	}
+	return uint8(v)
+}
+
+// scaleImageSeparable scales src to width×height with a separable kernel filter
+// in two passes (horizontal then vertical). radius is the kernel support radius.
+func scaleImageSeparable(src image.Image, width, height int, kernel func(float64) float64, radius int) *image.RGBA {
 	rgba, ok := src.(*image.RGBA)
 	if !ok {
 		rgba = image.NewRGBA(src.Bounds())
@@ -142,46 +454,15 @@ func scaleImageLanczos(src image.Image, width, height int) *image.RGBA {
 	sb := rgba.Bounds()
 	sw, sh := sb.Dx(), sb.Dy()
 
-	const a = 3 // Lanczos3 radius
-
-	lanczos := func(x float64) float64 {
-		if x < 0 {
-			x = -x
-		}
-		if x == 0 {
-			return 1
-		}
-		if x >= a {
-			return 0
-		}
-		px := math.Pi * x
-		return float64(a) * math.Sin(px) * math.Sin(px/float64(a)) / (px * px)
-	}
-
-	clamp := func(v float64) uint8 {
-		if v < 0 {
-			return 0
-		}
-		if v > 255 {
-			return 255
-		}
-		return uint8(v)
-	}
-
 	// Horizontal pass: sw×sh → width×sh
 	tmp := image.NewRGBA(image.Rect(0, 0, width, sh))
 	for y := range sh {
 		for x := range width {
 			srcX := (float64(x)+0.5)*float64(sw)/float64(width) - 0.5
 			var r, g, b, wsum float64
-			for k := int(srcX) - a + 1; k <= int(srcX)+a; k++ {
-				kk := k
-				if kk < 0 {
-					kk = 0
-				} else if kk >= sw {
-					kk = sw - 1
-				}
-				w := lanczos(srcX - float64(k))
+			for k := int(srcX) - radius + 1; k <= int(srcX)+radius; k++ {
+				kk := max(0, min(sw-1, k))
+				w := kernel(srcX - float64(k))
 				c := rgba.RGBAAt(sb.Min.X+kk, sb.Min.Y+y)
 				r += w * float64(c.R)
 				g += w * float64(c.G)
@@ -189,11 +470,9 @@ func scaleImageLanczos(src image.Image, width, height int) *image.RGBA {
 				wsum += w
 			}
 			if wsum > 0 {
-				r /= wsum
-				g /= wsum
-				b /= wsum
+				r /= wsum; g /= wsum; b /= wsum
 			}
-			tmp.SetRGBA(x, y, color.RGBA{R: clamp(r), G: clamp(g), B: clamp(b), A: 255})
+			tmp.SetRGBA(x, y, color.RGBA{R: clampU8(r), G: clampU8(g), B: clampU8(b), A: 255})
 		}
 	}
 
@@ -203,14 +482,9 @@ func scaleImageLanczos(src image.Image, width, height int) *image.RGBA {
 		for x := range width {
 			srcY := (float64(y)+0.5)*float64(sh)/float64(height) - 0.5
 			var r, g, b, wsum float64
-			for k := int(srcY) - a + 1; k <= int(srcY)+a; k++ {
-				kk := k
-				if kk < 0 {
-					kk = 0
-				} else if kk >= sh {
-					kk = sh - 1
-				}
-				w := lanczos(srcY - float64(k))
+			for k := int(srcY) - radius + 1; k <= int(srcY)+radius; k++ {
+				kk := max(0, min(sh-1, k))
+				w := kernel(srcY - float64(k))
 				c := tmp.RGBAAt(x, kk)
 				r += w * float64(c.R)
 				g += w * float64(c.G)
@@ -218,11 +492,29 @@ func scaleImageLanczos(src image.Image, width, height int) *image.RGBA {
 				wsum += w
 			}
 			if wsum > 0 {
-				r /= wsum
-				g /= wsum
-				b /= wsum
+				r /= wsum; g /= wsum; b /= wsum
 			}
-			dst.SetRGBA(x, y, color.RGBA{R: clamp(r), G: clamp(g), B: clamp(b), A: 255})
+			dst.SetRGBA(x, y, color.RGBA{R: clampU8(r), G: clampU8(g), B: clampU8(b), A: 255})
+		}
+	}
+	return dst
+}
+
+// scaleImageNearest scales src to width×height using nearest-neighbor sampling.
+func scaleImageNearest(src image.Image, width, height int) *image.RGBA {
+	rgba, ok := src.(*image.RGBA)
+	if !ok {
+		rgba = image.NewRGBA(src.Bounds())
+		draw.Draw(rgba, rgba.Bounds(), src, src.Bounds().Min, draw.Src)
+	}
+	sb := rgba.Bounds()
+	sw, sh := sb.Dx(), sb.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := range height {
+		srcY := min(int((float64(y)+0.5)*float64(sh)/float64(height)), sh-1)
+		for x := range width {
+			srcX := min(int((float64(x)+0.5)*float64(sw)/float64(width)), sw-1)
+			dst.SetRGBA(x, y, rgba.RGBAAt(sb.Min.X+srcX, sb.Min.Y+srcY))
 		}
 	}
 	return dst
