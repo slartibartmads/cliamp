@@ -8,3 +8,6 @@ spotify.log
 docs/ideas.md
 /plugins.md
 .worktrees/
+CLAUDE.md
+flake.nix
+flake.lock
