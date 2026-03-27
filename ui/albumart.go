@@ -10,7 +10,6 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
-	"math"
 	"net/http"
 	"strings"
 
@@ -32,15 +31,14 @@ type AlbumArt struct {
 	image    image.Image // decoded source image; nil if absent
 	scaled   *image.RGBA // rescaled to current display dimensions; nil = needs rescale
 	fetching bool        // true while an async HTTP fetch is in-flight
+	hidden   bool        // when true, art is not rendered
 
 	// lazy rescale cache — scaled is reused when all three match
 	lastArtCols int
 	lastHeight  int
 	lastMode    CoverArtMode
-	lastScale   ScaleMode
 
-	Mode  CoverArtMode // block character set (sextant/quadrant/half-block/bitmap)
-	Scale ScaleMode    // resampling filter (lanczos/bicubic/bilinear/nearest)
+	Mode CoverArtMode // block character set (sextant/quadrant/half-block/bitmap)
 }
 
 // OnTick implements HeaderPlugin. Detects track changes and kicks off fetches.
@@ -89,35 +87,39 @@ func (a *AlbumArt) OnMsg(msg tea.Msg) tea.Cmd {
 }
 
 // Render implements HeaderPlugin. Lazily rescales the image when height,
-// mode, scale, or panel width has changed, applying the art-derived theme
-// as a side effect. Returns ("", 0) when no image is available.
+// mode, or panel width has changed, applying the art-derived theme
+// as a side effect. Returns ("", 0) when no image is available or hidden.
 func (a *AlbumArt) Render(height int) (string, int) {
-	if a.image == nil {
+	if a.image == nil || a.hidden {
 		return "", 0
 	}
 	artCols := height * 2
 	if artCols > panelWidth/2 {
 		artCols = panelWidth / 2
 	}
-	if a.scaled == nil || artCols != a.lastArtCols || height != a.lastHeight || a.Mode != a.lastMode || a.Scale != a.lastScale {
+	if a.scaled == nil || artCols != a.lastArtCols || height != a.lastHeight || a.Mode != a.lastMode {
 		w, h := coverArtPixelSize(a.Mode, artCols, height)
-		a.scaled = scaleImage(a.image, w, h, a.Scale)
+		a.scaled = scaleImage(a.image, w, h)
 		applyTheme(themeFromImage(a.scaled))
 		a.lastArtCols = artCols
 		a.lastHeight = height
 		a.lastMode = a.Mode
-		a.lastScale = a.Scale
 	}
 	return renderCoverArt(a.scaled, artCols, height, a.Mode), artCols
 }
 
-// HandleKey implements KeyHandler. Claims the c/C keys for cycling art/scale mode.
+// HandleKey implements KeyHandler. c cycles the render mode, C toggles visibility.
 func (a *AlbumArt) HandleKey(key string) (bool, string) {
 	switch key {
 	case "c":
 		return true, "Art: " + a.CycleMode()
 	case "C":
-		return true, "Scale: " + a.CycleScale()
+		a.hidden = !a.hidden
+		a.scaled = nil
+		if a.hidden {
+			return true, "Album art: off"
+		}
+		return true, "Album art: on"
 	}
 	return false, ""
 }
@@ -133,13 +135,6 @@ func (a *AlbumArt) CycleMode() string {
 	a.Mode = (a.Mode + 1) % 4
 	a.scaled = nil // force rescale on next Render
 	return a.Mode.String()
-}
-
-// CycleScale advances to the next ScaleMode and returns the new scale name.
-func (a *AlbumArt) CycleScale() string {
-	a.Scale = (a.Scale + 1) % 4
-	a.scaled = nil // force rescale on next Render
-	return a.Scale.String()
 }
 
 // CoverArtFetchedMsg carries the result of an async cover art HTTP fetch.
@@ -182,7 +177,7 @@ func decodeCoverArt(data []byte) image.Image {
 type CoverArtMode int
 
 const (
-	CoverArtSextant  CoverArtMode = iota // 2×3 pixels/cell — Unicode 13 sextant blocks (default)
+	CoverArtSextant   CoverArtMode = iota // 2×3 pixels/cell — Unicode 13 sextant blocks (default)
 	CoverArtQuadrant                      // 2×2 pixels/cell — Unicode quadrant blocks
 	CoverArtHalfBlock                     // 1×2 pixels/cell — Unicode half blocks
 	CoverArtBitmap                        // Kitty terminal graphics protocol
@@ -300,8 +295,8 @@ func renderQuadrantArt(scaled *image.RGBA, width, height int) string {
 		for col := range width {
 			var px [4][3]uint32 // [tl, tr, bl, br][r, g, b]
 			for i, c := range [4][2]int{
-				{col*2, row*2}, {col*2 + 1, row*2},
-				{col*2, row*2 + 1}, {col*2 + 1, row*2 + 1},
+				{col * 2, row * 2}, {col*2 + 1, row * 2},
+				{col * 2, row*2 + 1}, {col*2 + 1, row*2 + 1},
 			} {
 				r, g, b, _ := scaled.At(c[0], c[1]).RGBA()
 				px[i] = [3]uint32{r >> 8, g >> 8, b >> 8}
@@ -324,9 +319,9 @@ func renderSextantArt(scaled *image.RGBA, width, height int) string {
 		for col := range width {
 			var px [6][3]uint32 // [tl, tr, ml, mr, bl, br][r, g, b]
 			for i, c := range [6][2]int{
-				{col*2, row*3}, {col*2 + 1, row*3},
-				{col*2, row*3 + 1}, {col*2 + 1, row*3 + 1},
-				{col*2, row*3 + 2}, {col*2 + 1, row*3 + 2},
+				{col * 2, row * 3}, {col*2 + 1, row * 3},
+				{col * 2, row*3 + 1}, {col*2 + 1, row*3 + 1},
+				{col * 2, row*3 + 2}, {col*2 + 1, row*3 + 2},
 			} {
 				r, g, b, _ := scaled.At(c[0], c[1]).RGBA()
 				px[i] = [3]uint32{r >> 8, g >> 8, b >> 8}
@@ -433,16 +428,26 @@ func groupColors4(px [4][3]uint32, pattern int) (fgR, fgG, fgB, bgR, bgG, bgB ui
 	var fgN, bgN uint32
 	for i, p := range px {
 		if (pattern>>(3-i))&1 == 1 {
-			fgR += p[0]; fgG += p[1]; fgB += p[2]; fgN++
+			fgR += p[0]
+			fgG += p[1]
+			fgB += p[2]
+			fgN++
 		} else {
-			bgR += p[0]; bgG += p[1]; bgB += p[2]; bgN++
+			bgR += p[0]
+			bgG += p[1]
+			bgB += p[2]
+			bgN++
 		}
 	}
 	if fgN > 0 {
-		fgR /= fgN; fgG /= fgN; fgB /= fgN
+		fgR /= fgN
+		fgG /= fgN
+		fgB /= fgN
 	}
 	if bgN > 0 {
-		bgR /= bgN; bgG /= bgN; bgB /= bgN
+		bgR /= bgN
+		bgG /= bgN
+		bgB /= bgN
 	}
 	if fgN == 0 {
 		fgR, fgG, fgB = bgR, bgG, bgB
@@ -457,16 +462,26 @@ func groupColors6(px [6][3]uint32, pattern int) (fgR, fgG, fgB, bgR, bgG, bgB ui
 	var fgN, bgN uint32
 	for i, p := range px {
 		if (pattern>>i)&1 == 1 {
-			fgR += p[0]; fgG += p[1]; fgB += p[2]; fgN++
+			fgR += p[0]
+			fgG += p[1]
+			fgB += p[2]
+			fgN++
 		} else {
-			bgR += p[0]; bgG += p[1]; bgB += p[2]; bgN++
+			bgR += p[0]
+			bgG += p[1]
+			bgB += p[2]
+			bgN++
 		}
 	}
 	if fgN > 0 {
-		fgR /= fgN; fgG /= fgN; fgB /= fgN
+		fgR /= fgN
+		fgG /= fgN
+		fgB /= fgN
 	}
 	if bgN > 0 {
-		bgR /= bgN; bgG /= bgN; bgB /= bgN
+		bgR /= bgN
+		bgG /= bgN
+		bgB /= bgN
 	}
 	if fgN == 0 {
 		fgR, fgG, fgB = bgR, bgG, bgB
@@ -477,56 +492,9 @@ func groupColors6(px [6][3]uint32, pattern int) (fgR, fgG, fgB, bgR, bgG, bgB ui
 	return
 }
 
-// ScaleMode selects the resampling filter used when scaling album art.
-type ScaleMode int
-
-const (
-	ScaleLanczos  ScaleMode = iota // Lanczos3 — sharpest, slight ringing (default)
-	ScaleBicubic                    // Bicubic (Keys a=-0.5) — smooth, no ringing
-	ScaleBilinear                   // Bilinear — fast, softer
-	ScaleNearest                    // Nearest-neighbor — pixelated / retro
-)
-
-func (s ScaleMode) String() string {
-	switch s {
-	case ScaleBicubic:
-		return "bicubic"
-	case ScaleBilinear:
-		return "bilinear"
-	case ScaleNearest:
-		return "nearest"
-	default:
-		return "lanczos"
-	}
-}
-
-// scaleImage scales src to width×height using the requested filter.
-func scaleImage(src image.Image, width, height int, mode ScaleMode) *image.RGBA {
-	switch mode {
-	case ScaleNearest:
-		return scaleImageNearest(src, width, height)
-	case ScaleBilinear:
-		return scaleImageSeparable(src, width, height, kernelBilinear, 1)
-	case ScaleBicubic:
-		return scaleImageSeparable(src, width, height, kernelBicubic, 2)
-	default: // ScaleLanczos
-		return scaleImageSeparable(src, width, height, kernelLanczos3, 3)
-	}
-}
-
-func kernelLanczos3(x float64) float64 {
-	const a = 3
-	if x < 0 {
-		x = -x
-	}
-	if x == 0 {
-		return 1
-	}
-	if x >= a {
-		return 0
-	}
-	px := math.Pi * x
-	return a * math.Sin(px) * math.Sin(px/a) / (px * px)
+// scaleImage scales src to width×height using bicubic interpolation.
+func scaleImage(src image.Image, width, height int) *image.RGBA {
+	return scaleImageSeparable(src, width, height, kernelBicubic, 2)
 }
 
 func kernelBicubic(x float64) float64 {
@@ -539,16 +507,6 @@ func kernelBicubic(x float64) float64 {
 	}
 	if x < 2 {
 		return a*x*x*x - 5*a*x*x + 8*a*x - 4*a
-	}
-	return 0
-}
-
-func kernelBilinear(x float64) float64 {
-	if x < 0 {
-		x = -x
-	}
-	if x < 1 {
-		return 1 - x
 	}
 	return 0
 }
@@ -590,7 +548,9 @@ func scaleImageSeparable(src image.Image, width, height int, kernel func(float64
 				wsum += w
 			}
 			if wsum > 0 {
-				r /= wsum; g /= wsum; b /= wsum
+				r /= wsum
+				g /= wsum
+				b /= wsum
 			}
 			tmp.SetRGBA(x, y, color.RGBA{R: clampU8(r), G: clampU8(g), B: clampU8(b), A: 255})
 		}
@@ -612,29 +572,11 @@ func scaleImageSeparable(src image.Image, width, height int, kernel func(float64
 				wsum += w
 			}
 			if wsum > 0 {
-				r /= wsum; g /= wsum; b /= wsum
+				r /= wsum
+				g /= wsum
+				b /= wsum
 			}
 			dst.SetRGBA(x, y, color.RGBA{R: clampU8(r), G: clampU8(g), B: clampU8(b), A: 255})
-		}
-	}
-	return dst
-}
-
-// scaleImageNearest scales src to width×height using nearest-neighbor sampling.
-func scaleImageNearest(src image.Image, width, height int) *image.RGBA {
-	rgba, ok := src.(*image.RGBA)
-	if !ok {
-		rgba = image.NewRGBA(src.Bounds())
-		draw.Draw(rgba, rgba.Bounds(), src, src.Bounds().Min, draw.Src)
-	}
-	sb := rgba.Bounds()
-	sw, sh := sb.Dx(), sb.Dy()
-	dst := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := range height {
-		srcY := min(int((float64(y)+0.5)*float64(sh)/float64(height)), sh-1)
-		for x := range width {
-			srcX := min(int((float64(x)+0.5)*float64(sw)/float64(width)), sw-1)
-			dst.SetRGBA(x, y, rgba.RGBAAt(sb.Min.X+srcX, sb.Min.Y+srcY))
 		}
 	}
 	return dst

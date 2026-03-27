@@ -301,10 +301,10 @@ func (m Model) renderHeaderBlock() string {
 		n := m.player.SamplesInto(m.vis.sampleBuf)
 		bands := m.vis.Analyze(m.vis.sampleBuf[:n])
 		visOut := m.vis.Render(bands)
-		// Truncate visualizer lines to leftW when album art shrinks the column.
+		// When album art shrinks the column, truncate visualizer lines to leftW.
 		for _, vl := range strings.Split(visOut, "\n") {
 			if lipgloss.Width(vl) > leftW {
-				vl = truncate(vl, leftW)
+				vl = truncVisLine(vl, leftW)
 			}
 			leftLines = append(leftLines, vl)
 		}
@@ -836,4 +836,37 @@ func (m Model) renderBottomStatus() string {
 		return left
 	}
 	return left + strings.Repeat(" ", gap) + right
+}
+
+// truncVisLine truncates a visualizer line to fit maxW display columns.
+// It walks visible characters from the left, appending a reset so colour
+// state doesn't leak across the cut point.
+func truncVisLine(s string, maxW int) string {
+	if maxW <= 0 {
+		return "\x1b[0m"
+	}
+	var b strings.Builder
+	vis := 0
+	inESC := false
+	for _, r := range s {
+		if inESC {
+			b.WriteRune(r)
+			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '~' {
+				inESC = false
+			}
+			continue
+		}
+		if r == '\x1b' {
+			b.WriteRune(r)
+			inESC = true
+			continue
+		}
+		if vis >= maxW {
+			break
+		}
+		b.WriteRune(r)
+		vis++
+	}
+	b.WriteString("\x1b[0m")
+	return b.String()
 }
