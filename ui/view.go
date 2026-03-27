@@ -298,10 +298,16 @@ func (m Model) renderHeaderBlock() string {
 	}
 
 	if m.vis.Mode != VisNone {
-		m.vis.Width = leftW
 		n := m.player.SamplesInto(m.vis.sampleBuf)
 		bands := m.vis.Analyze(m.vis.sampleBuf[:n])
-		leftLines = append(leftLines, strings.Split(m.vis.Render(bands), "\n")...)
+		visOut := m.vis.Render(bands)
+		// Truncate visualizer lines to leftW when album art shrinks the column.
+		for _, vl := range strings.Split(visOut, "\n") {
+			if lipgloss.Width(vl) > leftW {
+				vl = truncate(vl, leftW)
+			}
+			leftLines = append(leftLines, vl)
+		}
 	}
 
 	if pluginCols == 0 {
@@ -335,7 +341,6 @@ func (m Model) renderHeaderBlock() string {
 // renderFullVisualizer renders a full-screen view showing only the visualizer
 // with minimal track info and a seek bar.
 func (m Model) renderFullVisualizer() string {
-	m.vis.Width = panelWidth
 	n := m.player.SamplesInto(m.vis.sampleBuf)
 	bands := m.vis.Analyze(m.vis.sampleBuf[:n])
 	sections := []string{
