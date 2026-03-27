@@ -16,6 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"cliamp/playlist"
+	"cliamp/theme"
 )
 
 func init() {
@@ -88,9 +89,11 @@ func (a *AlbumArt) OnMsg(msg tea.Msg) tea.Cmd {
 
 // Render implements HeaderPlugin. Lazily rescales the image when height,
 // mode, or panel width has changed, applying the art-derived theme
-// as a side effect. Returns ("", 0) when no image is available or hidden.
+// as a side effect. Returns ("", 0) when no image is available or hidden,
+// restoring the default ANSI theme in that case.
 func (a *AlbumArt) Render(height int) (string, int) {
 	if a.image == nil || a.hidden {
+		applyTheme(theme.Default())
 		return "", 0
 	}
 	artCols := height * 2

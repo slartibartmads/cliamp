@@ -271,16 +271,6 @@ func (m Model) renderHeaderBlock() string {
 	var pluginCols int
 	if m.headerPlugin != nil {
 		pluginContent, pluginCols = m.headerPlugin.Render(height)
-		// When the plugin has no content, restore the base theme so
-		// the UI reverts to the user's chosen colours instead of
-		// lingering on a theme set by a previous plugin render.
-		if pluginCols == 0 {
-			if m.themeIdx < 0 {
-				applyTheme(theme.Default())
-			} else {
-				applyTheme(m.themes[m.themeIdx])
-			}
-		}
 	}
 
 	const artGap = 2
