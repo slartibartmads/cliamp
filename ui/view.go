@@ -269,8 +269,8 @@ func (m Model) renderHeaderBlock() string {
 	// Ask the header plugin for its content and column width.
 	var pluginContent string
 	var pluginCols int
-	if m.headerPlugin != nil {
-		pluginContent, pluginCols = m.headerPlugin.Render(height)
+	if hp, ok := m.provisionalPlugin.(ProvisionalHeaderProvider); ok {
+		pluginContent, pluginCols = hp.RenderHeader(height)
 	}
 
 	const artGap = 2
@@ -679,15 +679,23 @@ func (m Model) renderJumpOverlay() string {
 }
 
 func (m Model) renderHelp() string {
+	// Plugin suffix (right-aligned).
+	var suffix string
+	if hp, ok := m.provisionalPlugin.(ProvisionalHelpProvider); ok {
+		suffix = hp.HelpSuffix()
+	}
+
 	if m.focus == focusProvider {
-		help := helpKey("↑↓", "Navigate ") + helpKey("Enter", "Load ") + helpKey("/", "Search ")
+		left := helpKey("↑↓", "Navigate ") + helpKey("Enter", "Load ") + helpKey("/", "Search ")
 		if _, ok := m.provider.(*radio.Provider); ok {
-			help += helpKey("f", "Fav ")
+			left += helpKey("f", "Fav ")
 		}
-		return help + helpKey("Tab", "Focus ") + helpKey("Ctrl+K", "Keys")
+		left += helpKey("Tab", "Focus ") + helpKey("Ctrl+K", "Keys")
+		return m.helpWithSuffix(left, suffix)
 	}
 	if m.focus == focusProvPill {
-		return helpKey("←→", "Select ") + helpKey("Enter", "Open ") + helpKey("Esc", "Back ") + helpKey("Tab", "Focus ") + helpKey("Ctrl+K", "Keys")
+		left := helpKey("←→", "Select ") + helpKey("Enter", "Open ") + helpKey("Esc", "Back ") + helpKey("Tab", "Focus ") + helpKey("Ctrl+K", "Keys")
+		return m.helpWithSuffix(left, suffix)
 	}
 
 	// Show only the 4-5 most relevant keys per mode; Ctrl+K always anchored for full list.
@@ -727,7 +735,22 @@ func (m Model) renderHelp() string {
 		)
 	}
 
-	return fitHints(hints, panelWidth)
+	left := fitHints(hints, panelWidth)
+	return m.helpWithSuffix(left, suffix)
+}
+
+// helpWithSuffix combines left-aligned help hints with a right-aligned suffix.
+func (m Model) helpWithSuffix(left, suffix string) string {
+	if suffix == "" {
+		return left
+	}
+	lw := lipgloss.Width(left)
+	sw := lipgloss.Width(suffix)
+	gap := panelWidth - lw - sw
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + dimStyle.Render(suffix)
 }
 
 // helpHint is a rendered help key with an associated display priority.

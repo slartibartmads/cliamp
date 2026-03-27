@@ -249,8 +249,8 @@ func run(overrides config.Overrides, positional []string) error {
 	if cfg.Visualizer != "" {
 		m.SetVisualizer(cfg.Visualizer)
 	}
-	if cfg.HeaderPlugin != "" {
-		m.SetHeaderPlugin(cfg.HeaderPlugin)
+	if cfg.ProvisionalPlugin != "" {
+		m.SetProvisionalPlugin(cfg.ProvisionalPlugin)
 	}
 	if cfg.AutoPlay {
 		m.SetAutoPlay(true)

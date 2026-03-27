@@ -119,18 +119,18 @@ type Model struct {
 	seekStepLarge time.Duration
 
 	// UI navigation
-	focus     focusArea
-	prevFocus focusArea // focus to restore on cancel (search, net search)
-	eqCursor  int       // selected EQ band (0-9)
-	plCursor  int       // selected playlist item
-	plScroll  int       // scroll offset for playlist view
-	plVisible int       // max visible playlist items
+	focus           focusArea
+	prevFocus       focusArea // focus to restore on cancel (search, net search)
+	eqCursor        int       // selected EQ band (0-9)
+	plCursor        int       // selected playlist item
+	plScroll        int       // scroll offset for playlist view
+	plVisible       int       // max visible playlist items
 	titleOff        int       // scroll offset for long track titles
 	titleLastScroll time.Time // last time the title scrolled
-	err       error
-	quitting  bool
-	width     int
-	height    int
+	err             error
+	quitting        bool
+	width           int
+	height          int
 
 	// Provider state
 	provider      playlist.Provider
@@ -144,22 +144,22 @@ type Model struct {
 	eqPresetIdx   int             // -1 = custom, 0+ = index into eqPresets
 
 	// Overlay / feature state (see state.go for struct definitions)
-	search      searchState
-	netSearch   netSearchState
-	provSearch  provSearchState
-	seek        seekState
-	themePicker themePickerState
-	lyrics      lyricsState
-	keymap      keymapOverlay
-	queue       queueOverlay
-	plManager   plManagerState
-	fileBrowser fileBrowserState
-	navBrowser    navBrowserState
-	radioCatalog  radioCatalogState
-	ytdlBatch     ytdlBatchState
-	reconnect   reconnectState
-	status      statusMsg
-	network     networkStats
+	search       searchState
+	netSearch    netSearchState
+	provSearch   provSearchState
+	seek         seekState
+	themePicker  themePickerState
+	lyrics       lyricsState
+	keymap       keymapOverlay
+	queue        queueOverlay
+	plManager    plManagerState
+	fileBrowser  fileBrowserState
+	navBrowser   navBrowserState
+	radioCatalog radioCatalogState
+	ytdlBatch    ytdlBatchState
+	reconnect    reconnectState
+	status       statusMsg
+	network      networkStats
 
 	// Jump to time mode
 	jumping   bool
@@ -217,9 +217,9 @@ type Model struct {
 	cachedPos time.Duration
 	cachedDur time.Duration
 
-	// headerPlugin renders content to the right of the track info header.
-	// nil means no plugin is active. Set via SetHeaderPlugin.
-	headerPlugin HeaderPlugin
+	// provisionalPlugin renders content to the right of the track info header.
+	// nil means no plugin is active. Set via SetProvisionalPlugin.
+	provisionalPlugin ProvisionalPlugin
 
 	// Navidrome client (kept separate from navBrowser for non-browser operations)
 	navClient          *navidrome.NavidromeClient
@@ -269,11 +269,11 @@ func NewModel(p *player.Player, pl *playlist.Playlist, providers []ProviderEntry
 	return m
 }
 
-// SetHeaderPlugin activates a registered header plugin by name.
+// SetProvisionalPlugin activates a registered header plugin by name.
 // If name is not registered the call is a no-op.
-func (m *Model) SetHeaderPlugin(name string) {
-	if factory, ok := pluginRegistry[name]; ok {
-		m.headerPlugin = factory()
+func (m *Model) SetProvisionalPlugin(name string) {
+	if factory, ok := provisionalRegistry[name]; ok {
+		m.provisionalPlugin = factory()
 	}
 }
 
@@ -396,7 +396,7 @@ func (m *Model) themePickerCancel() {
 }
 
 // activeVisRows returns the number of visualizer rows currently rendered,
-// or 0 when the visualizer is off. Used to pass context to HeaderPlugin calls.
+// or 0 when the visualizer is off. Used to pass context to ProvisionalPlugin calls.
 func (m Model) activeVisRows() int {
 	if m.vis.Mode != VisNone {
 		return m.vis.Rows
@@ -674,8 +674,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		frameStyle = frameStyle.Width(frameW)
 		panelWidth = max(0, frameW-2*paddingH)
-		if m.headerPlugin != nil {
-			m.headerPlugin.OnResize()
+		if m.provisionalPlugin != nil {
+			m.provisionalPlugin.OnResize()
 		}
 		if m.fullVis {
 			m.vis.Rows = max(defaultVisRows, (m.height-10)*4/5)
@@ -701,8 +701,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.plVisible = max(3, min(maxPlVisible, m.height-fixedLines))
 
 	case CoverArtFetchedMsg:
-		if m.headerPlugin != nil {
-			m.headerPlugin.OnMsg(msg)
+		if m.provisionalPlugin != nil {
+			m.provisionalPlugin.OnMsg(msg)
 		}
 		return m, nil
 
@@ -733,8 +733,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Drive the header plugin (track change detection + async fetch).
 		currentTrack, _ := m.playlist.Current()
 		var pluginCmd tea.Cmd
-		if m.headerPlugin != nil {
-			pluginCmd = m.headerPlugin.OnTick(currentTrack)
+		if m.provisionalPlugin != nil {
+			pluginCmd = m.provisionalPlugin.OnTick(currentTrack)
 		}
 		// Process debounced yt-dlp seek.
 		var seekCmd tea.Cmd

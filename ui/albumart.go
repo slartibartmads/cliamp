@@ -20,7 +20,7 @@ import (
 )
 
 func init() {
-	RegisterHeaderPlugin("albumart", func() HeaderPlugin { return new(AlbumArt) })
+	RegisterProvisionalPlugin("albumart", func() ProvisionalPlugin { return new(AlbumArt) })
 }
 
 // AlbumArt manages cover art fetching, caching, scaling, and rendering.
@@ -42,7 +42,7 @@ type AlbumArt struct {
 	Mode CoverArtMode // block character set (sextant/quadrant/half-block/bitmap)
 }
 
-// OnTick implements HeaderPlugin. Detects track changes and kicks off fetches.
+// OnTick implements ProvisionalPlugin. Detects track changes and kicks off fetches.
 func (a *AlbumArt) OnTick(track playlist.Track) tea.Cmd {
 
 	// Detect track change and clear cached art.
@@ -73,7 +73,7 @@ func (a *AlbumArt) OnTick(track playlist.Track) tea.Cmd {
 	return nil
 }
 
-// OnMsg implements HeaderPlugin. Handles CoverArtFetchedMsg.
+// OnMsg implements ProvisionalPlugin. Handles CoverArtFetchedMsg.
 func (a *AlbumArt) OnMsg(msg tea.Msg) tea.Cmd {
 	fetched, ok := msg.(CoverArtFetchedMsg)
 	if !ok {
@@ -87,11 +87,11 @@ func (a *AlbumArt) OnMsg(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-// Render implements HeaderPlugin. Lazily rescales the image when height,
+// RenderHeader implements ProvisionalHeaderProvider. Lazily rescales the image when height,
 // mode, or panel width has changed, applying the art-derived theme
 // as a side effect. Returns ("", 0) when no image is available or hidden,
 // restoring the default ANSI theme in that case.
-func (a *AlbumArt) Render(height int) (string, int) {
+func (a *AlbumArt) RenderHeader(height int) (string, int) {
 	if a.image == nil || a.hidden {
 		applyTheme(theme.Default())
 		return "", 0
@@ -111,7 +111,16 @@ func (a *AlbumArt) Render(height int) (string, int) {
 	return renderCoverArt(a.scaled, artCols, height, a.Mode), artCols
 }
 
-// HandleKey implements KeyHandler. c cycles the render mode, C toggles visibility.
+// HelpSuffix implements ProvisionalHelpProvider. Returns the current render mode name
+// when art is visible, so the user knows which mode is active.
+func (a *AlbumArt) HelpSuffix() string {
+	if a.image == nil || a.hidden {
+		return ""
+	}
+	return a.Mode.String()
+}
+
+// HandleKey implements ProvisionalKeyHandler. c cycles the render mode, C toggles visibility.
 func (a *AlbumArt) HandleKey(key string) (bool, string) {
 	switch key {
 	case "c":
@@ -125,7 +134,7 @@ func (a *AlbumArt) HandleKey(key string) (bool, string) {
 	return false, ""
 }
 
-// OnResize implements HeaderPlugin. Invalidates the scaled cache so the
+// OnResize implements ProvisionalPlugin. Invalidates the scaled cache so the
 // image is re-rendered at the new terminal dimensions on the next Render.
 func (a *AlbumArt) OnResize() {
 	a.scaled = nil
