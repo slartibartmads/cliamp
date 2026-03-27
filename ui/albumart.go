@@ -115,14 +115,12 @@ func (a *AlbumArt) Render(height int) (string, int) {
 func (a *AlbumArt) HandleKey(key string) (bool, string) {
 	switch key {
 	case "c":
-		return true, "Art: " + a.CycleMode()
+		a.CycleMode()
+		return true, ""
 	case "C":
 		a.hidden = !a.hidden
 		a.scaled = nil
-		if a.hidden {
-			return true, "Album art: off"
-		}
-		return true, "Album art: on"
+		return true, ""
 	}
 	return false, ""
 }
