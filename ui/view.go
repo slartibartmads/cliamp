@@ -263,21 +263,30 @@ func (m Model) renderTimeStatus(width int) string {
 // spectrum, seek bar) as the left column, with album art spanning the full
 // height to the right when cover art is available.
 func (m Model) renderHeaderBlock() string {
-	hasArt := m.coverArtScaled != nil
+	visRows := m.activeVisRows()
+	height := 4 + visRows // title + trackinfo + timestatus + blank + vis rows
 
-	numRows := 4 // title + trackinfo + timestatus + blank
-	if m.vis.Mode != VisNone {
-		numRows += m.vis.Rows
-	}
-	artCols := numRows * 2
-	if artCols > panelWidth/2 {
-		artCols = panelWidth / 2
+	// Ask the header plugin for its content and column width.
+	var pluginContent string
+	var pluginCols int
+	if m.headerPlugin != nil {
+		pluginContent, pluginCols = m.headerPlugin.Render(height)
+		// When the plugin has no content, restore the base theme so
+		// the UI reverts to the user's chosen colours instead of
+		// lingering on a theme set by a previous plugin render.
+		if pluginCols == 0 {
+			if m.themeIdx < 0 {
+				applyTheme(theme.Default())
+			} else {
+				applyTheme(m.themes[m.themeIdx])
+			}
+		}
 	}
 
 	const artGap = 2
 	leftW := panelWidth
-	if hasArt {
-		leftW = panelWidth - artCols - artGap
+	if pluginCols > 0 {
+		leftW = panelWidth - pluginCols - artGap
 	}
 
 	// Build the left column line by line.
@@ -295,31 +304,29 @@ func (m Model) renderHeaderBlock() string {
 		leftLines = append(leftLines, strings.Split(m.vis.Render(bands), "\n")...)
 	}
 
-	if !hasArt {
+	if pluginCols == 0 {
 		return strings.Join(leftLines, "\n") + "\n\n" + m.renderSeekBar(panelWidth)
 	}
 
-	// Render art at the exact height of the left column so it aligns top to bottom.
-	artStr := renderCoverArt(m.coverArtScaled, artCols, len(leftLines), m.coverArtMode)
-	artLines := strings.Split(artStr, "\n")
-
+	// Lay out the plugin content to the right of the left column.
+	pluginLines := strings.Split(pluginContent, "\n")
 	var sb strings.Builder
 	for i, l := range leftLines {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
-		// Pad the left line to leftW so the art column stays flush.
+		// Pad the left line to leftW so the plugin column stays flush.
 		lw := lipgloss.Width(l)
 		sb.WriteString(l)
 		if lw < leftW {
 			sb.WriteString(strings.Repeat(" ", leftW-lw))
 		}
 		sb.WriteString(strings.Repeat(" ", artGap))
-		if i < len(artLines) {
-			sb.WriteString(artLines[i])
+		if i < len(pluginLines) {
+			sb.WriteString(pluginLines[i])
 		}
 	}
-	// Seek bar spans the full panel width, below both the text column and the art.
+	// Seek bar spans the full panel width, below both columns.
 	sb.WriteString("\n\n")
 	sb.WriteString(m.renderSeekBar(panelWidth))
 	return sb.String()

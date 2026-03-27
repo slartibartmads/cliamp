@@ -22,7 +22,7 @@
             version = "1.27.3-unstable-2026-03-25";
             src = /home/mads/git/cliamp;
 
-            vendorHash = "sha256-UMDCpfSGfvJmI+sImaFzgZpLNaLMgEnmGCqERwPokHM=";
+            vendorHash = null;
 
             nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.pkg-config ];
             buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.alsa-lib pkgs.libvorbis pkgs.libogg pkgs.flac ];

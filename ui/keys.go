@@ -157,6 +157,17 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return m.handleProvSearchKey(msg)
 	}
 
+	// Let the active header plugin claim keys before global bindings.
+	if kh, ok := m.headerPlugin.(KeyHandler); ok {
+		if handled, status := kh.HandleKey(msg.String()); handled {
+			if status != "" {
+				m.status.text = status
+				m.status.ttl = statusTTLShort
+			}
+			return nil
+		}
+	}
+
 	if m.focus == focusProvider {
 		switch msg.String() {
 		case "q", "ctrl+c":

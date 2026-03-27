@@ -4,7 +4,6 @@ package ui
 import (
 	"errors"
 	"fmt"
-	"image"
 	"strconv"
 	"strings"
 	"time"
@@ -218,14 +217,9 @@ type Model struct {
 	cachedPos time.Duration
 	cachedDur time.Duration
 
-	// Cached cover art; updated when the current track changes.
-	coverArtPath     string        // path of track whose image is cached
-	coverArtKey      string        // art source identifier (URL or "embedded:<len>")
-	coverArtImage    image.Image   // decoded cover art; nil if absent
-	coverArtScaled   *image.RGBA   // Lanczos-scaled to current display dimensions
-	coverArtFetching bool          // true while an async HTTP fetch is in-flight
-	coverArtMode     CoverArtMode  // block character resolution (sextant/quadrant/half-block)
-	scaleMode        ScaleMode     // resampling filter (lanczos/bicubic/bilinear/nearest)
+	// headerPlugin renders content to the right of the track info header.
+	// nil means no plugin is active. Set via SetHeaderPlugin.
+	headerPlugin HeaderPlugin
 
 	// Navidrome client (kept separate from navBrowser for non-browser operations)
 	navClient          *navidrome.NavidromeClient
@@ -273,6 +267,14 @@ func NewModel(p *player.Player, pl *playlist.Playlist, providers []ProviderEntry
 		m.provider = providers[0].Provider
 	}
 	return m
+}
+
+// SetHeaderPlugin activates a registered header plugin by name.
+// If name is not registered the call is a no-op.
+func (m *Model) SetHeaderPlugin(name string) {
+	if factory, ok := pluginRegistry[name]; ok {
+		m.headerPlugin = factory()
+	}
 }
 
 // SetAutoPlay makes the player start playback immediately on Init.
@@ -393,32 +395,13 @@ func (m *Model) themePickerCancel() {
 	m.themePicker.visible = false
 }
 
-// artDisplayDims returns the (artCols, numRows) used to render the cover art
-// thumbnail, mirroring the logic in renderHeaderBlock.
-func (m Model) artDisplayDims() (artCols, numRows int) {
-	numRows = 4 // title + trackinfo + timestatus + blank
+// activeVisRows returns the number of visualizer rows currently rendered,
+// or 0 when the visualizer is off. Used to pass context to HeaderPlugin calls.
+func (m Model) activeVisRows() int {
 	if m.vis.Mode != VisNone {
-		numRows += m.vis.Rows
+		return m.vis.Rows
 	}
-	artCols = numRows * 2
-	if artCols > panelWidth/2 {
-		artCols = panelWidth / 2
-	}
-	return
-}
-
-// updateCoverArtScaled recomputes the Lanczos-scaled thumbnail from
-// coverArtImage at the current display dimensions and refreshes the theme.
-func (m *Model) updateCoverArtScaled() {
-	if m.coverArtImage == nil {
-		m.coverArtScaled = nil
-		m.restoreBaseTheme()
-		return
-	}
-	artCols, numRows := m.artDisplayDims()
-	w, h := coverArtPixelSize(m.coverArtMode, artCols, numRows)
-	m.coverArtScaled = scaleImage(m.coverArtImage, w, h, m.scaleMode)
-	applyTheme(themeFromImage(m.coverArtScaled))
+	return 0
 }
 
 // openPlaylistManager loads playlist metadata and opens the manager overlay.
@@ -717,11 +700,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		fixedLines := lipgloss.Height(probeFrame) - 1 // subtract the 1-line placeholder
 		m.plVisible = max(3, min(maxPlVisible, m.height-fixedLines))
 
-	case coverArtFetchedMsg:
-		if msg.path == m.coverArtPath {
-			m.coverArtImage = msg.img
-			m.coverArtFetching = false
-			m.updateCoverArtScaled()
+	case CoverArtFetchedMsg:
+		if m.headerPlugin != nil {
+			m.headerPlugin.OnMsg(msg)
 		}
 		return m, nil
 
@@ -749,29 +730,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cachedDur = time.Duration(track.DurationSecs) * time.Second
 			m.cachedPos = 0
 		}
-		// Update cover art when the current track changes.
-		if track, _ := m.playlist.Current(); track.Path != m.coverArtPath {
-			m.coverArtPath = track.Path
-
-			// Compute the art source key for the new track so we can detect
-			// same-album skips (e.g. all tracks sharing one CoverArtURL).
-			newKey := track.CoverArtURL
-			if newKey == "" && len(track.CoverArt) > 0 {
-				newKey = fmt.Sprintf("embedded:%d", len(track.CoverArt))
-			}
-
-			if newKey != "" && newKey == m.coverArtKey {
-				// Same art source — keep the current image and theme as-is.
-			} else {
-				m.coverArtKey = newKey
-				m.coverArtImage = nil
-				m.coverArtFetching = false
-				if len(track.CoverArt) > 0 {
-					// Embedded bytes (local files): decode synchronously — no I/O.
-					m.coverArtImage = decodeCoverArt(track.CoverArt)
-				}
-				m.updateCoverArtScaled()
-			}
+		// Drive the header plugin (track change detection + async fetch).
+		currentTrack, _ := m.playlist.Current()
+		var pluginCmd tea.Cmd
+		if m.headerPlugin != nil {
+			pluginCmd = m.headerPlugin.OnTick(currentTrack)
 		}
 		// Process debounced yt-dlp seek.
 		var seekCmd tea.Cmd
@@ -860,11 +823,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if seekCmd != nil {
 			cmds = append(cmds, seekCmd)
 		}
-		// Kick off an async fetch if the current track has a cover art URL but
-		// no image yet and no fetch is already in-flight.
-		if track, _ := m.playlist.Current(); m.coverArtImage == nil && !m.coverArtFetching && track.CoverArtURL != "" && track.Path == m.coverArtPath {
-			m.coverArtFetching = true
-			cmds = append(cmds, fetchCoverArtCmd(track.Path, track.CoverArtURL))
+		if pluginCmd != nil {
+			cmds = append(cmds, pluginCmd)
 		}
 		if lyricCmd != nil {
 			cmds = append(cmds, lyricCmd)

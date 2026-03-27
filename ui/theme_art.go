@@ -58,15 +58,6 @@ func themeFromImage(img *image.RGBA) theme.Theme {
 	}
 }
 
-// restoreBaseTheme re-applies whatever theme was selected before art overrode it.
-func (m *Model) restoreBaseTheme() {
-	if m.themeIdx < 0 {
-		applyTheme(theme.Default())
-	} else {
-		applyTheme(m.themes[m.themeIdx])
-	}
-}
-
 func rgbToHSV(r, g, b float64) (h, s, v float64) {
 	r, g, b = r/255, g/255, b/255
 	mx := math.Max(r, math.Max(g, b))

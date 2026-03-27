@@ -15,28 +15,153 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"cliamp/playlist"
 )
 
-// coverArtFetchedMsg carries the result of an async cover art HTTP fetch.
-type coverArtFetchedMsg struct {
+func init() {
+	RegisterHeaderPlugin("albumart", func() HeaderPlugin { return new(AlbumArt) })
+}
+
+// AlbumArt manages cover art fetching, caching, scaling, and rendering.
+// It owns all cover-art state so that the Model struct stays clean.
+// Zero value is valid; no constructor required.
+type AlbumArt struct {
+	path     string      // path of track whose image is cached
+	key      string      // art source identifier (URL or "embedded:<len>")
+	image    image.Image // decoded source image; nil if absent
+	scaled   *image.RGBA // rescaled to current display dimensions; nil = needs rescale
+	fetching bool        // true while an async HTTP fetch is in-flight
+
+	// lazy rescale cache — scaled is reused when all three match
+	lastArtCols int
+	lastHeight  int
+	lastMode    CoverArtMode
+	lastScale   ScaleMode
+
+	Mode  CoverArtMode // block character set (sextant/quadrant/half-block/bitmap)
+	Scale ScaleMode    // resampling filter (lanczos/bicubic/bilinear/nearest)
+}
+
+// OnTick implements HeaderPlugin. Detects track changes and kicks off fetches.
+func (a *AlbumArt) OnTick(track playlist.Track) tea.Cmd {
+
+	// Detect track change and clear cached art.
+	if track.Path != a.path {
+		a.path = track.Path
+
+		newKey := track.CoverArtURL
+		if newKey == "" && len(track.CoverArt) > 0 {
+			newKey = fmt.Sprintf("embedded:%d", len(track.CoverArt))
+		}
+
+		if newKey == "" || newKey != a.key {
+			a.key = newKey
+			a.image = nil
+			a.scaled = nil
+			a.fetching = false
+			if len(track.CoverArt) > 0 {
+				a.image = decodeCoverArt(track.CoverArt)
+			}
+		}
+	}
+
+	// Kick off an async fetch if needed.
+	if a.image == nil && !a.fetching && track.CoverArtURL != "" && track.Path == a.path {
+		a.fetching = true
+		return fetchCoverArtCmd(track.Path, track.CoverArtURL)
+	}
+	return nil
+}
+
+// OnMsg implements HeaderPlugin. Handles CoverArtFetchedMsg.
+func (a *AlbumArt) OnMsg(msg tea.Msg) tea.Cmd {
+	fetched, ok := msg.(CoverArtFetchedMsg)
+	if !ok {
+		return nil
+	}
+	if fetched.path == a.path {
+		a.image = fetched.img
+		a.scaled = nil // force rescale on next Render
+		a.fetching = false
+	}
+	return nil
+}
+
+// Render implements HeaderPlugin. Lazily rescales the image when height,
+// mode, scale, or panel width has changed, applying the art-derived theme
+// as a side effect. Returns ("", 0) when no image is available.
+func (a *AlbumArt) Render(height int) (string, int) {
+	if a.image == nil {
+		return "", 0
+	}
+	artCols := height * 2
+	if artCols > panelWidth/2 {
+		artCols = panelWidth / 2
+	}
+	if a.scaled == nil || artCols != a.lastArtCols || height != a.lastHeight || a.Mode != a.lastMode || a.Scale != a.lastScale {
+		w, h := coverArtPixelSize(a.Mode, artCols, height)
+		a.scaled = scaleImage(a.image, w, h, a.Scale)
+		applyTheme(themeFromImage(a.scaled))
+		a.lastArtCols = artCols
+		a.lastHeight = height
+		a.lastMode = a.Mode
+		a.lastScale = a.Scale
+	}
+	return renderCoverArt(a.scaled, artCols, height, a.Mode), artCols
+}
+
+// HandleKey implements KeyHandler. Claims the c/C keys for cycling art/scale mode.
+func (a *AlbumArt) HandleKey(key string) (bool, string) {
+	switch key {
+	case "c":
+		return true, "Art: " + a.CycleMode()
+	case "C":
+		return true, "Scale: " + a.CycleScale()
+	}
+	return false, ""
+}
+
+// OnResize implements HeaderPlugin. Invalidates the scaled cache so the
+// image is re-rendered at the new terminal dimensions on the next Render.
+func (a *AlbumArt) OnResize() {
+	a.scaled = nil
+}
+
+// CycleMode advances to the next CoverArtMode and returns the new mode name.
+func (a *AlbumArt) CycleMode() string {
+	a.Mode = (a.Mode + 1) % 4
+	a.scaled = nil // force rescale on next Render
+	return a.Mode.String()
+}
+
+// CycleScale advances to the next ScaleMode and returns the new scale name.
+func (a *AlbumArt) CycleScale() string {
+	a.Scale = (a.Scale + 1) % 4
+	a.scaled = nil // force rescale on next Render
+	return a.Scale.String()
+}
+
+// CoverArtFetchedMsg carries the result of an async cover art HTTP fetch.
+type CoverArtFetchedMsg struct {
 	path string // track path the fetch was initiated for
 	img  image.Image
 }
 
 // fetchCoverArtCmd fetches cover art from artURL in a goroutine and returns a
-// coverArtFetchedMsg. path is used to discard stale results if the track changes.
+// CoverArtFetchedMsg. path is used to discard stale results if the track changes.
 func fetchCoverArtCmd(path, artURL string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := http.Get(artURL) //nolint:noctx
 		if err != nil {
-			return coverArtFetchedMsg{path: path}
+			return CoverArtFetchedMsg{path: path}
 		}
 		defer resp.Body.Close()
 		img, _, err := image.Decode(resp.Body)
 		if err != nil {
-			return coverArtFetchedMsg{path: path}
+			return CoverArtFetchedMsg{path: path}
 		}
-		return coverArtFetchedMsg{path: path, img: img}
+		return CoverArtFetchedMsg{path: path, img: img}
 	}
 }
 
