@@ -109,6 +109,11 @@ func (a *AlbumArt) RenderHeader(height int) (string, int) {
 		return "", 0
 	}
 	if a.hidden {
+		if a.Mode == CoverArtBitmap {
+			const kittyDeleteAll = "\x1b_Ga=d,d=A,q=2\x1b\\\n"
+			applyTheme(theme.Default())
+			return kittyDeleteAll, 1 // non-zero so delete is actually rendered
+		}
 		applyTheme(theme.Default())
 		return "", 0
 	}
@@ -144,10 +149,6 @@ func (a *AlbumArt) RenderHeader(height int) (string, int) {
 
 	// Bitmap mode: always transmit fresh (simpler, confirm protocol works).
 	if a.Mode == CoverArtBitmap {
-		if a.hidden {
-			applyTheme(theme.Default())
-			return "", 0
-		}
 		return renderBitmapTransmit(a.scaled, artCols, height), artCols
 	}
 	return renderCoverArt(a.scaled, artCols, height, a.Mode), artCols
