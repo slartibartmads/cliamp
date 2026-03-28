@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"image"
+	"image/draw"
 	"math"
 
 	"cliamp/theme"
@@ -29,19 +30,29 @@ func themeFromImage(img *image.RGBA) theme.Theme {
 
 // extractHSV returns the averaged HSV of the top-N scoring pixels in img.
 // score is the average score of those pixels (0 for greyscale images).
-func extractHSV(img *image.RGBA) (h, s, v, score float64) {
+func extractHSV(img image.Image) (h, s, v, score float64) {
 	if img == nil {
 		return 0, 0, 0, 0
 	}
-	b := img.Bounds()
+	// Convert to RGBA if needed for pixel access.
+	rgba, ok := img.(*image.RGBA)
+	var b image.Rectangle
+	if !ok {
+		rgba = image.NewRGBA(img.Bounds())
+		draw.Draw(rgba, rgba.Bounds(), img, img.Bounds().Min, draw.Src)
+		b = rgba.Bounds()
+	} else {
+		b = rgba.Bounds()
+	}
+
+	minScore := 0.0
 
 	// Collect top-N pixels by score.
 	var pool [topNColors]colorSample
-	minScore := 0.0
 
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		for x := b.Min.X; x < b.Max.X; x++ {
-			c := img.RGBAAt(x, y)
+			c := rgba.RGBAAt(x, y)
 			ph, ps, pv := rgbToHSV(float64(c.R), float64(c.G), float64(c.B))
 			sc := ps * ps * (1 - math.Abs(pv-0.55)*1.5)
 			if sc <= 0 {

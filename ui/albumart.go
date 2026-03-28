@@ -39,9 +39,9 @@ type AlbumArt struct {
 	lastHeight  int
 	lastMode    CoverArtMode
 
-	// Kitty bitmap state — transmit once, re-place every frame
-	bitmapID    int  // unique image ID for Kitty protocol
-	bitmapDirty bool // true when scaled image changed (needs re-transmit)
+	// Theme extraction — from a small thumbnail (averages out anti-aliasing)
+	themeThumb   *image.RGBA // 32x32 thumbnail for theme extraction
+	lastThemeKey string      // tracks a.key when theme was last extracted
 
 	// smooth theme transition
 	curH, curS, curV float64 // currently displayed HSV
@@ -57,6 +57,8 @@ func (a *AlbumArt) OnTick(track playlist.Track) tea.Cmd {
 	// Detect track change and clear cached art.
 	if track.Path != a.path {
 		a.path = track.Path
+		a.scaled = nil // force rescale on next Render
+		a.image = nil
 
 		newKey := track.CoverArtURL
 		if newKey == "" && len(track.CoverArt) > 0 {
@@ -65,8 +67,6 @@ func (a *AlbumArt) OnTick(track playlist.Track) tea.Cmd {
 
 		if newKey == "" || newKey != a.key {
 			a.key = newKey
-			a.image = nil
-			a.scaled = nil
 			a.fetching = false
 			if len(track.CoverArt) > 0 {
 				a.image = decodeCoverArt(track.CoverArt)
@@ -120,13 +120,16 @@ func (a *AlbumArt) RenderHeader(height int) (string, int) {
 	if rescaled {
 		w, h := coverArtPixelSize(a.Mode, artCols, height)
 		a.scaled = scaleImage(a.image, w, h)
-		a.bitmapDirty = true
-		// Extract target HSV from the freshly-scaled image.
-		a.tgtH, a.tgtS, a.tgtV, _ = extractHSV(a.scaled)
-		if !a.themeInit {
-			// First frame: snap to target (no transition on app start).
-			a.curH, a.curS, a.curV = a.tgtH, a.tgtS, a.tgtV
-			a.themeInit = true
+		// Extract theme from a small thumbnail (averages out anti-aliasing).
+		// Only re-extract when the source image changed (tracked by a.key).
+		if a.key != a.lastThemeKey {
+			a.lastThemeKey = a.key
+			a.themeThumb = scaleImage(a.image, 32, 32)
+			a.tgtH, a.tgtS, a.tgtV, _ = extractHSV(a.themeThumb)
+			if !a.themeInit {
+				a.curH, a.curS, a.curV = a.tgtH, a.tgtS, a.tgtV
+				a.themeInit = true
+			}
 		}
 		a.lastArtCols = artCols
 		a.lastHeight = height
@@ -139,16 +142,45 @@ func (a *AlbumArt) RenderHeader(height int) (string, int) {
 	a.curV = lerp(a.curV, a.tgtV, t)
 	applyTheme(themeFromHSV(a.curH, a.curS, a.curV))
 
-	// Bitmap mode: transmit once, re-place every frame to avoid flicker.
+	// Bitmap mode: always transmit fresh (simpler, confirm protocol works).
 	if a.Mode == CoverArtBitmap {
-		if a.bitmapDirty {
-			a.bitmapID++
-			a.bitmapDirty = false
-			return renderBitmapFull(a.scaled, artCols, height, a.bitmapID), artCols
-		}
-		return renderBitmapPlace(artCols, height, a.bitmapID), artCols
+		return renderBitmapTransmit(a.scaled, artCols, height), artCols
 	}
 	return renderCoverArt(a.scaled, artCols, height, a.Mode), artCols
+}
+
+// renderBitmapTransmit transmits the image using Kitty protocol.
+// Deletes all previous images first, then transmits fresh.
+func renderBitmapTransmit(scaled *image.RGBA, cols, rows int) string {
+	encoded := base64.StdEncoding.EncodeToString(scaled.Pix)
+	b := scaled.Bounds()
+
+	var sb strings.Builder
+
+	// Delete all previous images to prevent stacking.
+	sb.WriteString("\x1b_Ga=d,d=A,q=2\x1b\\")
+
+	// Transmit image.
+	const chunkSize = 4096
+	for i := 0; i < len(encoded); i += chunkSize {
+		end := min(i+chunkSize, len(encoded))
+		more := 1
+		if end == len(encoded) {
+			more = 0
+		}
+		if i == 0 {
+			// First chunk: transmit.
+			fmt.Fprintf(&sb, "\x1b_Ga=T,f=32,s=%d,v=%d,c=%d,r=%d,C=1,q=2,m=%d;%s\x1b\\",
+				b.Dx(), b.Dy(), cols, rows, more, encoded[i:end])
+		} else {
+			fmt.Fprintf(&sb, "\x1b_Gm=%d,q=2;%s\x1b\\", more, encoded[i:end])
+		}
+	}
+
+	sb.WriteByte('\n')
+	lines := make([]string, rows)
+	lines[0] = sb.String()
+	return strings.Join(lines, "\n")
 }
 
 // lerp linearly interpolates from a toward b by factor t (0–1).
@@ -335,7 +367,7 @@ func renderCoverArt(scaled *image.RGBA, width, height int, mode CoverArtMode) st
 	case CoverArtQuadrant:
 		return kittyDeleteAll + renderQuadrantArt(scaled, width, height)
 	case CoverArtBitmap:
-		// Bitmap mode is handled directly in RenderHeader via renderBitmapFull/Place.
+		// Bitmap mode is handled directly in RenderHeader via renderBitmapTransmit.
 		// This fallback deletes all Kitty images for safety.
 		return kittyDeleteAll
 	default:
@@ -343,6 +375,8 @@ func renderCoverArt(scaled *image.RGBA, width, height int, mode CoverArtMode) st
 	}
 }
 
+// renderSixelArt renders the image using the Sixel graphics protocol.
+// Requires a Sixel-compatible terminal (xterm, iTerm2, etc.).
 // renderHalfBlockArt renders using ▀ with fg=top pixel, bg=bottom pixel per cell.
 // Input image must be width × height*2 pixels.
 func renderHalfBlockArt(scaled *image.RGBA, width, height int) string {
@@ -407,57 +441,6 @@ func renderSextantArt(scaled *image.RGBA, width, height int) string {
 		rows[row] = sb.String()
 	}
 	return strings.Join(rows, "\n")
-}
-
-// renderBitmapArt transmits the image using the Kitty terminal graphics protocol
-// and returns a single-line string that occupies cols×rows cells in the layout.
-// Rows 1+ of the returned slice are empty — the Kitty image persists over them.
-// Requires a Kitty-compatible terminal (e.g. kitty, WezTerm, Ghostty).
-// renderBitmapFull transmits the image using the Kitty terminal graphics protocol
-// with a unique image ID, then places it. Call this once when the image changes.
-func renderBitmapFull(scaled *image.RGBA, cols, rows, imageID int) string {
-	// Delete previous image with this ID to prevent stacking.
-	encoded := base64.StdEncoding.EncodeToString(scaled.Pix)
-	b := scaled.Bounds()
-
-	var sb strings.Builder
-
-	// Delete previous placement of this image.
-	fmt.Fprintf(&sb, "\x1b_Ga=d,d=i,i=%d,q=2\x1b\\", imageID)
-
-	// Transmit in chunks of ≤4096 base64 bytes as required by the protocol.
-	const chunkSize = 4096
-	for i := 0; i < len(encoded); i += chunkSize {
-		end := min(i+chunkSize, len(encoded))
-		more := 1
-		if end == len(encoded) {
-			more = 0
-		}
-		if i == 0 {
-			// First chunk: transmit + place with image ID.
-			fmt.Fprintf(&sb, "\x1b_Ga=T,f=32,s=%d,v=%d,c=%d,r=%d,i=%d,C=1,q=2,m=%d;%s\x1b\\",
-				b.Dx(), b.Dy(), cols, rows, imageID, more, encoded[i:end])
-		} else {
-			fmt.Fprintf(&sb, "\x1b_Gm=%d,q=2;%s\x1b\\", more, encoded[i:end])
-		}
-	}
-
-	sb.WriteByte('\n')
-	lines := make([]string, rows)
-	lines[0] = sb.String()
-	return strings.Join(lines, "\n")
-}
-
-// renderBitmapPlace re-places a previously transmitted Kitty image by ID.
-// This is fast (no pixel data transfer) and flicker-free.
-func renderBitmapPlace(cols, rows, imageID int) string {
-	var sb strings.Builder
-	// Place existing image at current cursor position.
-	fmt.Fprintf(&sb, "\x1b_Ga=p,i=%d,C=1,q=2\x1b\\", imageID)
-	sb.WriteByte('\n')
-	lines := make([]string, rows)
-	lines[0] = sb.String()
-	return strings.Join(lines, "\n")
 }
 
 // assignFgBg4 assigns 4 pixels to fg/bg by luma, averages each group's color,
