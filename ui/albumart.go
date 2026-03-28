@@ -141,7 +141,7 @@ func (a *AlbumArt) RenderHeader(height int) (string, int) {
 		a.lastMode = a.Mode
 	}
 	// Lerp current HSV toward target for smooth transition.
-	const t = 0.02 // ~1-2s to settle at 50 ticks/sec
+	const t = 0.5 // ~1-2s to settle at 50 ticks/sec
 	a.curH = lerpHue(a.curH, a.tgtH, t)
 	a.curS = lerp(a.curS, a.tgtS, t)
 	a.curV = lerp(a.curV, a.tgtV, t)
