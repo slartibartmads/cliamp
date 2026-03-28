@@ -236,7 +236,7 @@ func (a *AlbumArt) OnResize() {
 
 // CycleMode advances to the next CoverArtMode and returns the new mode name.
 func (a *AlbumArt) CycleMode() string {
-	a.Mode = (a.Mode + 1) % 4
+	a.Mode = (a.Mode + 1) % 5
 	a.scaled = nil // force rescale on next Render
 	return a.Mode.String()
 }
@@ -277,7 +277,7 @@ func decodeCoverArt(data []byte) image.Image {
 	return img
 }
 
-// CoverArtMode selects the Unicode block character set used to render album art.
+// CoverArtMode selects the rendering method for album art (Unicode blocks or terminal graphics protocols).
 type CoverArtMode int
 
 const (
@@ -285,6 +285,7 @@ const (
 	CoverArtQuadrant                      // 2×2 pixels/cell — Unicode quadrant blocks
 	CoverArtHalfBlock                     // 1×2 pixels/cell — Unicode half blocks
 	CoverArtBitmap                        // Kitty terminal graphics protocol
+	CoverArtSixel                         // Sixel terminal graphics protocol
 )
 
 func (m CoverArtMode) String() string {
@@ -295,6 +296,8 @@ func (m CoverArtMode) String() string {
 		return "half-block"
 	case CoverArtBitmap:
 		return "bitmap"
+	case CoverArtSixel:
+		return "sixel"
 	default:
 		return "sextant"
 	}
@@ -310,6 +313,8 @@ func coverArtPixelSize(mode CoverArtMode, cols, rows int) (w, h int) {
 		return cols * 2, rows * 2
 	case CoverArtBitmap:
 		return 256, 256
+	case CoverArtSixel:
+		return cols * 10, rows * 20
 	default: // CoverArtSextant
 		return cols * 2, rows * 3
 	}
@@ -375,8 +380,6 @@ func renderCoverArt(scaled *image.RGBA, width, height int, mode CoverArtMode) st
 	}
 }
 
-// renderSixelArt renders the image using the Sixel graphics protocol.
-// Requires a Sixel-compatible terminal (xterm, iTerm2, etc.).
 // renderHalfBlockArt renders using ▀ with fg=top pixel, bg=bottom pixel per cell.
 // Input image must be width × height*2 pixels.
 func renderHalfBlockArt(scaled *image.RGBA, width, height int) string {
