@@ -144,6 +144,10 @@ func (a *AlbumArt) RenderHeader(height int) (string, int) {
 
 	// Bitmap mode: always transmit fresh (simpler, confirm protocol works).
 	if a.Mode == CoverArtBitmap {
+		if a.hidden {
+			applyTheme(theme.Default())
+			return "", 0
+		}
 		return renderBitmapTransmit(a.scaled, artCols, height), artCols
 	}
 	return renderCoverArt(a.scaled, artCols, height, a.Mode), artCols
