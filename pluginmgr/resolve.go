@@ -57,15 +57,16 @@ func resolveSource(source string) (urls []string, name string, err error) {
 	}
 	name = parts[1]
 
-	// Convention: repos must be named cliamp-plugin-<name>.
-	// The installed plugin name is the short name (e.g. soap-bubbles).
+	// Convention: repos are named cliamp-plugin-<name> with entry point <name>.lua.
 	short := strings.TrimPrefix(name, "cliamp-plugin-")
-	filenames := []string{name, short}
-	urls = buildForgeURLs(forge, repo, ref, filenames)
-	return urls, short, nil
+	u, err := buildForgeURL(forge, repo, ref, short)
+	if err != nil {
+		return nil, "", err
+	}
+	return []string{u}, short, nil
 }
 
-func buildForgeURLs(forge, repo, ref string, filenames []string) []string {
+func buildForgeURL(forge, repo, ref, entrypoint string) (string, error) {
 	var base string
 	switch forge {
 	case "github":
@@ -85,12 +86,8 @@ func buildForgeURLs(forge, repo, ref string, filenames []string) []string {
 			base = fmt.Sprintf("https://codeberg.org/%s/raw/tag/%s", repo, ref)
 		}
 	default:
-		return nil
+		return "", fmt.Errorf("unsupported forge %q", forge)
 	}
 
-	urls := []string{base + "/init.lua"}
-	for _, name := range filenames {
-		urls = append(urls, base+"/"+name+".lua")
-	}
-	return urls
+	return base + "/" + entrypoint + ".lua", nil
 }

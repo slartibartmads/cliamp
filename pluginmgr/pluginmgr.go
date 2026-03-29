@@ -82,38 +82,27 @@ func Install(source string) error {
 		return fmt.Errorf("creating plugins directory: %w", err)
 	}
 
-	// Check if already installed.
+	// Check if already installed (file or directory).
 	dest := filepath.Join(dir, name+".lua")
 	if _, err := os.Stat(dest); err == nil {
 		return fmt.Errorf("plugin %q already exists at %s (remove it first with: cliamp plugins remove %s)", name, dest, name)
 	}
-	destDir := filepath.Join(dir, name)
-	if _, err := os.Stat(destDir); err == nil {
-		return fmt.Errorf("plugin %q already exists at %s (remove it first with: cliamp plugins remove %s)", name, destDir, name)
+	if info, err := os.Stat(filepath.Join(dir, name)); err == nil && info.IsDir() {
+		return fmt.Errorf("plugin %q already exists as directory (remove it first with: cliamp plugins remove %s)", name, name)
 	}
 
 	// Try each candidate URL.
 	var body []byte
-	var dlURL string
 	for _, u := range urls {
 		fmt.Printf("Trying %s...\n", u)
 		b, err := download(u)
 		if err == nil {
 			body = b
-			dlURL = u
 			break
 		}
 	}
 	if body == nil {
 		return fmt.Errorf("could not download plugin from any of: %s", strings.Join(urls, ", "))
-	}
-
-	// For repo sources with init.lua, save as a directory.
-	if strings.HasSuffix(dlURL, "/init.lua") {
-		if err := os.MkdirAll(destDir, 0o755); err != nil {
-			return err
-		}
-		dest = filepath.Join(destDir, "init.lua")
 	}
 
 	if err := os.WriteFile(dest, body, 0o644); err != nil {
