@@ -15,6 +15,7 @@ import (
 	"cliamp/external/local"
 	"cliamp/external/navidrome"
 	"cliamp/external/radio"
+	"cliamp/external/spotify"
 	"cliamp/mpris"
 	"cliamp/player"
 	"cliamp/playlist"
@@ -135,7 +136,8 @@ type Model struct {
 
 	// Provider state
 	provider      playlist.Provider
-	localProvider *local.Provider // direct ref for write operations (add-to-playlist)
+	localProvider   *local.Provider           // direct ref for write operations (add-to-playlist)
+	spotifyProvider *spotify.SpotifyProvider  // direct ref for search/playlist write operations
 	providerLists []playlist.PlaylistInfo
 	provCursor    int
 	provLoading   bool
@@ -154,6 +156,7 @@ type Model struct {
 	keymap      keymapOverlay
 	queue       queueOverlay
 	plManager   plManagerState
+	spotSearch  spotSearchState
 	fileBrowser fileBrowserState
 	navBrowser    navBrowserState
 	radioBatch    radioBatchState
@@ -231,7 +234,7 @@ type Model struct {
 // navCfg is the Navidrome config used to seed the initial browse sort preference.
 // nav is the raw NavidromeClient (may be nil); stored directly so the browser
 // key handler doesn't have to unwrap a provider.
-func NewModel(p *player.Player, pl *playlist.Playlist, providers []ProviderEntry, defaultProvider string, localProv *local.Provider, themes []theme.Theme, navCfg config.NavidromeConfig, nav *navidrome.NavidromeClient) Model {
+func NewModel(p *player.Player, pl *playlist.Playlist, providers []ProviderEntry, defaultProvider string, localProv *local.Provider, spotifyProv *spotify.SpotifyProvider, themes []theme.Theme, navCfg config.NavidromeConfig, nav *navidrome.NavidromeClient) Model {
 	sortType := navCfg.BrowseSort
 	if sortType == "" {
 		sortType = navidrome.SortAlphabeticalByName
@@ -246,6 +249,7 @@ func NewModel(p *player.Player, pl *playlist.Playlist, providers []ProviderEntry
 		themes:             themes,
 		themeIdx:           -1, // Default (ANSI)
 		localProvider:      localProv,
+		spotifyProvider:    spotifyProv,
 		providers:          providers,
 		navBrowser:         navBrowserState{sortType: sortType},
 		navClient:          nav,
@@ -1165,6 +1169,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.provLoading = false
 		m.feedLoading = false
 		m.buffering = false
+		return m, nil
+
+	case spotSearchResultsMsg:
+		m.spotSearch.loading = false
+		if msg.err != nil {
+			m.spotSearch.err = msg.err.Error()
+			return m, nil
+		}
+		m.spotSearch.results = msg.tracks
+		m.spotSearch.cursor = 0
+		m.spotSearch.screen = spotSearchResults
+		if len(msg.tracks) == 0 {
+			m.spotSearch.err = "No results found"
+		}
+		return m, nil
+
+	case spotPlaylistsMsg:
+		m.spotSearch.loading = false
+		if msg.err != nil {
+			m.spotSearch.err = msg.err.Error()
+			return m, nil
+		}
+		m.spotSearch.playlists = msg.playlists
+		m.spotSearch.cursor = 0
+		m.spotSearch.screen = spotSearchPlaylist
+		return m, nil
+
+	case spotAddedMsg:
+		m.spotSearch.loading = false
+		if msg.err != nil {
+			m.spotSearch.err = "Add failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.status.text = fmt.Sprintf("Added to \"%s\"", msg.name)
+		m.status.ttl = statusTTLDefault
+		m.spotSearch.visible = false
+		return m, nil
+
+	case spotCreatedMsg:
+		m.spotSearch.loading = false
+		if msg.err != nil {
+			m.spotSearch.err = "Create failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.status.text = fmt.Sprintf("Created \"%s\" & added track", msg.name)
+		m.status.ttl = statusTTLDefault
+		m.spotSearch.visible = false
 		return m, nil
 
 	case provAuthDoneMsg:
