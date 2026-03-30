@@ -11,14 +11,14 @@ import (
 )
 
 const (
-	defaultSpectrumBands = 10
+	DefaultSpectrumBands = 10
 	defaultFFTSize       = 2048
-	defaultVisRows       = 5
+	DefaultVisRows       = 5
 	minSpectrumHz        = 20.0
 	maxSpectrumHz        = 20000.0
 )
 
-var legacySpectrumEdges = [defaultSpectrumBands + 1]float64{
+var legacySpectrumEdges = [DefaultSpectrumBands + 1]float64{
 	minSpectrumHz,
 	100,
 	200,
@@ -60,7 +60,7 @@ const (
 	VisButterfly                  // mirrored Rorschach spectrum
 	VisLightning                  // electric bolts from treble energy
 	VisNone                       // hidden — no visualizer
-	visCount                      // sentinel for cycling
+	VisCount                      // sentinel for cycling
 )
 
 // Unicode block elements for bar height (9 levels including space)
@@ -75,15 +75,15 @@ var brailleBit = [4][2]rune{
 }
 
 // visBandWidth returns the character width for band b so that all bands plus
-// 1-char gaps exactly fill panelWidth. The remainder is distributed across the
+// 1-char gaps exactly fill PanelWidth. The remainder is distributed across the
 // first few bands.
 func visBandWidth(totalBands, b int) int {
 	const gap = 1
 	if totalBands <= 0 {
 		return 0
 	}
-	base := (panelWidth - (totalBands-1)*gap) / totalBands
-	extra := (panelWidth - (totalBands-1)*gap) % totalBands
+	base := (PanelWidth - (totalBands-1)*gap) / totalBands
+	extra := (PanelWidth - (totalBands-1)*gap) % totalBands
 	if b < extra {
 		return base + 1
 	}
@@ -181,32 +181,32 @@ func averageSpectrumRangeLinear(magnitudes []float64, loPos, hiPos float64) floa
 
 // Pre-built styles for spectrum bar colors to avoid per-frame allocation.
 var (
-	specLowStyle  = lipgloss.NewStyle().Foreground(spectrumLow)
-	specMidStyle  = lipgloss.NewStyle().Foreground(spectrumMid)
-	specHighStyle = lipgloss.NewStyle().Foreground(spectrumHigh)
+	specLowStyle  = lipgloss.NewStyle().Foreground(SpectrumLow)
+	specMidStyle  = lipgloss.NewStyle().Foreground(SpectrumMid)
+	specHighStyle = lipgloss.NewStyle().Foreground(SpectrumHigh)
 )
 
-type visTickContext struct {
+type VisTickContext struct {
 	Now           time.Time
 	Playing       bool
 	Paused        bool
 	OverlayActive bool
-	Analyze       func(visAnalysisSpec) []float64
+	Analyze       func(VisAnalysisSpec) []float64
 }
 
-type visAnalysisSpec struct {
+type VisAnalysisSpec struct {
 	BandCount int
 	FFTSize   int
 }
 
-func spectrumAnalysisSpec(bandCount int) visAnalysisSpec {
-	return visAnalysisSpec{
+func spectrumAnalysisSpec(bandCount int) VisAnalysisSpec {
+	return VisAnalysisSpec{
 		BandCount: bandCount,
 		FFTSize:   defaultFFTSize,
 	}
 }
 
-func normalizeAnalysisSpec(spec visAnalysisSpec) visAnalysisSpec {
+func NormalizeAnalysisSpec(spec VisAnalysisSpec) VisAnalysisSpec {
 	if spec.BandCount < 0 {
 		spec.BandCount = 0
 	}
@@ -217,10 +217,10 @@ func normalizeAnalysisSpec(spec visAnalysisSpec) visAnalysisSpec {
 }
 
 type visModeDriver interface {
-	AnalysisSpec(*Visualizer) visAnalysisSpec
+	AnalysisSpec(*Visualizer) VisAnalysisSpec
 	Render(*Visualizer) string
-	Tick(*Visualizer, visTickContext)
-	TickInterval(*Visualizer, visTickContext) time.Duration
+	Tick(*Visualizer, VisTickContext)
+	TickInterval(*Visualizer, VisTickContext) time.Duration
 	OnEnter(*Visualizer)
 	OnLeave(*Visualizer)
 }
@@ -232,11 +232,11 @@ type visEntry struct {
 }
 
 type renderOnlyDriver struct {
-	spec   visAnalysisSpec
+	spec   VisAnalysisSpec
 	render func(*Visualizer, []float64) string
 }
 
-func (d *renderOnlyDriver) AnalysisSpec(*Visualizer) visAnalysisSpec {
+func (d *renderOnlyDriver) AnalysisSpec(*Visualizer) VisAnalysisSpec {
 	return d.spec
 }
 
@@ -244,11 +244,11 @@ func (d *renderOnlyDriver) Render(v *Visualizer) string {
 	return d.render(v, v.bands)
 }
 
-func (d *renderOnlyDriver) Tick(v *Visualizer, ctx visTickContext) {
+func (d *renderOnlyDriver) Tick(v *Visualizer, ctx VisTickContext) {
 	defaultDriverTick(v, ctx, d.spec)
 }
 
-func (*renderOnlyDriver) TickInterval(_ *Visualizer, ctx visTickContext) time.Duration {
+func (*renderOnlyDriver) TickInterval(_ *Visualizer, ctx VisTickContext) time.Duration {
 	return defaultDriverTickInterval(ctx)
 }
 
@@ -258,21 +258,21 @@ func (*renderOnlyDriver) OnLeave(*Visualizer) {}
 
 type noOpDriver struct{}
 
-func (*noOpDriver) AnalysisSpec(*Visualizer) visAnalysisSpec { return visAnalysisSpec{} }
+func (*noOpDriver) AnalysisSpec(*Visualizer) VisAnalysisSpec { return VisAnalysisSpec{} }
 
 func (*noOpDriver) Render(*Visualizer) string { return "" }
 
-func (*noOpDriver) Tick(*Visualizer, visTickContext) {}
+func (*noOpDriver) Tick(*Visualizer, VisTickContext) {}
 
-func (*noOpDriver) TickInterval(*Visualizer, visTickContext) time.Duration { return tickSlow }
+func (*noOpDriver) TickInterval(*Visualizer, VisTickContext) time.Duration { return TickSlow }
 
 func (*noOpDriver) OnEnter(*Visualizer) {}
 
 func (*noOpDriver) OnLeave(*Visualizer) {}
 
-func newRenderOnlyDriver(spec visAnalysisSpec, render func(*Visualizer, []float64) string) func() visModeDriver {
+func newRenderOnlyDriver(spec VisAnalysisSpec, render func(*Visualizer, []float64) string) func() visModeDriver {
 	return func() visModeDriver {
-		return &renderOnlyDriver{spec: normalizeAnalysisSpec(spec), render: render}
+		return &renderOnlyDriver{spec: NormalizeAnalysisSpec(spec), render: render}
 	}
 }
 
@@ -280,11 +280,11 @@ func newNoOpDriver() visModeDriver {
 	return &noOpDriver{}
 }
 
-func defaultDriverTick(v *Visualizer, ctx visTickContext, spec visAnalysisSpec) {
+func defaultDriverTick(v *Visualizer, ctx VisTickContext, spec VisAnalysisSpec) {
 	if ctx.OverlayActive || ctx.Analyze == nil {
 		return
 	}
-	spec = normalizeAnalysisSpec(spec)
+	spec = NormalizeAnalysisSpec(spec)
 	bands := ctx.Analyze(spec)
 	if spec.BandCount > 0 {
 		v.bands = bands
@@ -294,19 +294,19 @@ func defaultDriverTick(v *Visualizer, ctx visTickContext, spec visAnalysisSpec) 
 // defaultDriverTickInterval uses fast ticks only when audio is actively playing with a live
 // visualizer. Paused/stopped playback has no new audio samples, so slow ticks are sufficient
 // and save CPU/GPU repaints. Overlays use slow ticks as well.
-func defaultDriverTickInterval(ctx visTickContext) time.Duration {
+func defaultDriverTickInterval(ctx VisTickContext) time.Duration {
 	if ctx.OverlayActive {
-		return tickSlow
+		return TickSlow
 	}
 	if ctx.Playing {
-		return tickFast
+		return TickFast
 	}
-	return tickSlow
+	return TickSlow
 }
 
 // Visualizer performs FFT analysis and renders spectrum bars.
 type Visualizer struct {
-	prevBySpec     map[visAnalysisSpec][]float64
+	prevBySpec     map[VisAnalysisSpec][]float64
 	edgeCache      map[int][]float64
 	fftBufCache    map[int][]float64
 	windowCache    map[int][]float64
@@ -317,26 +317,26 @@ type Visualizer struct {
 	waveBuf        []float64 // raw samples for wave mode
 	frame          uint64    // tick-driven animation clock
 	sampleBuf      []float64 // reusable buffer for reading audio tap samples
-	drivers        [visCount]visModeDriver
+	drivers        [VisCount]visModeDriver
 	activeMode     VisMode
 	activeModeSet  bool
 	refreshPending bool
 	luaVisNames    []string
-	luaRender      luaVisRenderer
+	luaRender      LuaVisRenderer
 	luaDriverCache map[int]visModeDriver
 }
 
-// luaVisRenderer is the callback type for rendering a Lua visualizer frame.
-type luaVisRenderer func(name string, bands [defaultSpectrumBands]float64, rows, cols int, frame uint64) string
+// LuaVisRenderer is the callback type for rendering a Lua visualizer frame.
+type LuaVisRenderer func(name string, bands [DefaultSpectrumBands]float64, rows, cols int, frame uint64) string
 
 // NewVisualizer creates a Visualizer for the given sample rate.
 func NewVisualizer(sampleRate float64) *Visualizer {
 	return &Visualizer{
 		sr:             sampleRate,
 		sampleBuf:      make([]float64, defaultFFTSize),
-		Rows:           defaultVisRows,
-		bands:          make([]float64, defaultSpectrumBands),
-		prevBySpec:     make(map[visAnalysisSpec][]float64),
+		Rows:           DefaultVisRows,
+		bands:          make([]float64, DefaultSpectrumBands),
+		prevBySpec:     make(map[VisAnalysisSpec][]float64),
 		edgeCache:      make(map[int][]float64),
 		fftBufCache:    make(map[int][]float64),
 		windowCache:    make(map[int][]float64),
@@ -347,54 +347,54 @@ func NewVisualizer(sampleRate float64) *Visualizer {
 
 // CycleMode advances to the next visualizer mode, including Lua visualizers.
 func (v *Visualizer) CycleMode() {
-	total := visCount + VisMode(len(v.luaVisNames))
+	total := VisCount + VisMode(len(v.luaVisNames))
 	v.Mode = (v.Mode + 1) % total
 }
 
 // visModes is the single source of truth for all visualizer modes.
 // To add a new mode: add a const, add one line here, create a vis_*.go file.
-var visModes = [visCount]visEntry{
-	VisBars:        {"Bars", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderBars)},
-	VisBarsDot:     {"BarsDot", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderBarsDot)},
-	VisRain:        {"Rain", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderRain)},
-	VisBarsOutline: {"BarsOutline", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderBarsOutline)},
-	VisBricks:      {"Bricks", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderBricks)},
-	VisColumns:     {"Columns", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderColumns)},
+var visModes = [VisCount]visEntry{
+	VisBars:        {"Bars", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderBars)},
+	VisBarsDot:     {"BarsDot", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderBarsDot)},
+	VisRain:        {"Rain", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderRain)},
+	VisBarsOutline: {"BarsOutline", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderBarsOutline)},
+	VisBricks:      {"Bricks", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderBricks)},
+	VisColumns:     {"Columns", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderColumns)},
 	VisClassicPeak: {"ClassicPeak", newClassicPeakDriver},
 	VisWave:        {"Wave", newRenderOnlyDriver(spectrumAnalysisSpec(0), func(v *Visualizer, _ []float64) string { return v.renderWave() })},
-	VisScatter:     {"Scatter", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderScatter)},
-	VisFlame:       {"Flame", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderFlame)},
-	VisRetro:       {"Retro", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderRetro)},
-	VisPulse:       {"Pulse", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderPulse)},
-	VisMatrix:      {"Matrix", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderMatrix)},
-	VisBinary:      {"Binary", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderBinary)},
-	VisSakura:      {"Sakura", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderSakura)},
-	VisFirework:    {"Firework", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderFirework)},
-	VisLogo:        {"Logo", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderLogo)},
+	VisScatter:     {"Scatter", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderScatter)},
+	VisFlame:       {"Flame", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderFlame)},
+	VisRetro:       {"Retro", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderRetro)},
+	VisPulse:       {"Pulse", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderPulse)},
+	VisMatrix:      {"Matrix", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderMatrix)},
+	VisBinary:      {"Binary", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderBinary)},
+	VisSakura:      {"Sakura", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderSakura)},
+	VisFirework:    {"Firework", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderFirework)},
+	VisLogo:        {"Logo", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderLogo)},
 	VisTerrain:     {"Terrain", newTerrainDriver},
-	VisGlitch:      {"Glitch", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderGlitch)},
+	VisGlitch:      {"Glitch", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderGlitch)},
 	VisScope:       {"Scope", newRenderOnlyDriver(spectrumAnalysisSpec(0), func(v *Visualizer, _ []float64) string { return v.renderScope() })},
 	VisHeartbeat:   {"Heartbeat", newRenderOnlyDriver(spectrumAnalysisSpec(0), func(v *Visualizer, _ []float64) string { return v.renderHeartbeat() })},
-	VisButterfly:   {"Butterfly", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderButterfly)},
-	VisLightning:   {"Lightning", newRenderOnlyDriver(spectrumAnalysisSpec(defaultSpectrumBands), (*Visualizer).renderLightning)},
+	VisButterfly:   {"Butterfly", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderButterfly)},
+	VisLightning:   {"Lightning", newRenderOnlyDriver(spectrumAnalysisSpec(DefaultSpectrumBands), (*Visualizer).renderLightning)},
 	VisNone:        {"None", newNoOpDriver},
 }
 
 var visNameMap map[string]VisMode
 
 func init() {
-	visNameMap = make(map[string]VisMode, visCount)
-	for i := range visCount {
+	visNameMap = make(map[string]VisMode, VisCount)
+	for i := range VisCount {
 		visNameMap[strings.ToLower(visModes[i].name)] = VisMode(i)
 	}
 }
 
 // ModeName returns the display name of the current mode.
 func (v *Visualizer) ModeName() string {
-	if v.Mode < visCount {
+	if v.Mode < VisCount {
 		return visModes[v.Mode].name
 	}
-	luaIdx := int(v.Mode - visCount)
+	luaIdx := int(v.Mode - VisCount)
 	if luaIdx < len(v.luaVisNames) {
 		return v.luaVisNames[luaIdx]
 	}
@@ -443,7 +443,7 @@ func buildHannWindow(size int) []float64 {
 	return window
 }
 
-func (v *Visualizer) prevBands(spec visAnalysisSpec) []float64 {
+func (v *Visualizer) prevBands(spec VisAnalysisSpec) []float64 {
 	if prev, ok := v.prevBySpec[spec]; ok {
 		return prev
 	}
@@ -486,8 +486,8 @@ func (v *Visualizer) resetSpectrumHistory() {
 	clear(v.prevBySpec)
 }
 
-func (v *Visualizer) ensureSampleBuf(size int) []float64 {
-	size = normalizeAnalysisSpec(visAnalysisSpec{FFTSize: size}).FFTSize
+func (v *Visualizer) EnsureSampleBuf(size int) []float64 {
+	size = NormalizeAnalysisSpec(VisAnalysisSpec{FFTSize: size}).FFTSize
 	if cap(v.sampleBuf) < size {
 		v.sampleBuf = make([]float64, size)
 	} else {
@@ -498,19 +498,19 @@ func (v *Visualizer) ensureSampleBuf(size int) []float64 {
 
 // RegisterLuaVisualizers adds Lua visualizer names so they can be cycled
 // through with the v key. renderer is called when a Lua visualizer is active.
-func (v *Visualizer) RegisterLuaVisualizers(names []string, renderer luaVisRenderer) {
+func (v *Visualizer) RegisterLuaVisualizers(names []string, renderer LuaVisRenderer) {
 	v.luaVisNames = names
 	v.luaRender = renderer
 	clear(v.luaDriverCache)
 	// Add to name map for StringToVisMode lookups.
 	for i, name := range names {
-		visNameMap[strings.ToLower(name)] = visCount + VisMode(i)
+		visNameMap[strings.ToLower(name)] = VisCount + VisMode(i)
 	}
 }
 
 // Analyze runs FFT on raw audio samples and returns normalized band levels (0-1).
-func (v *Visualizer) Analyze(samples []float64, spec visAnalysisSpec) []float64 {
-	spec = normalizeAnalysisSpec(spec)
+func (v *Visualizer) Analyze(samples []float64, spec VisAnalysisSpec) []float64 {
+	spec = NormalizeAnalysisSpec(spec)
 
 	// Store raw samples for wave mode.
 	if n := len(samples); n > 0 {
@@ -593,13 +593,13 @@ func (v *Visualizer) Render() string {
 	return driver.Render(v)
 }
 
-func (v *Visualizer) requestRefresh() {
+func (v *Visualizer) RequestRefresh() {
 	if v != nil {
 		v.refreshPending = true
 	}
 }
 
-func (v *Visualizer) consumeRefresh() bool {
+func (v *Visualizer) ConsumeRefresh() bool {
 	if v == nil || !v.refreshPending {
 		return false
 	}
@@ -607,15 +607,27 @@ func (v *Visualizer) consumeRefresh() bool {
 	return true
 }
 
-func (v *Visualizer) TickInterval(ctx visTickContext) time.Duration {
+// SampleBuf returns the internal sample buffer (for slicing after SamplesInto).
+func (v *Visualizer) SampleBuf() []float64 { return v.sampleBuf }
+
+// Bands returns the current spectrum band values.
+func (v *Visualizer) Bands() []float64 { return v.bands }
+
+// Frame returns the current animation frame counter.
+func (v *Visualizer) Frame() uint64 { return v.frame }
+
+// RefreshPending reports whether a refresh has been requested.
+func (v *Visualizer) RefreshPending() bool { return v != nil && v.refreshPending }
+
+func (v *Visualizer) TickInterval(ctx VisTickContext) time.Duration {
 	driver := v.syncDriverMode()
 	if driver == nil {
-		return tickSlow
+		return TickSlow
 	}
 	return driver.TickInterval(v, ctx)
 }
 
-func (v *Visualizer) Tick(ctx visTickContext) {
+func (v *Visualizer) Tick(ctx VisTickContext) {
 	driver := v.syncDriverMode()
 	if driver == nil {
 		return
@@ -631,8 +643,8 @@ func (v *Visualizer) driverFor(mode VisMode) visModeDriver {
 	if v == nil || mode < 0 {
 		return nil
 	}
-	if mode >= visCount {
-		idx := int(mode - visCount)
+	if mode >= VisCount {
+		idx := int(mode - VisCount)
 		if idx < 0 || idx >= len(v.luaVisNames) {
 			return nil
 		}
@@ -657,22 +669,22 @@ type luaModeDriver struct {
 	index int
 }
 
-func (*luaModeDriver) AnalysisSpec(*Visualizer) visAnalysisSpec {
-	return spectrumAnalysisSpec(defaultSpectrumBands)
+func (*luaModeDriver) AnalysisSpec(*Visualizer) VisAnalysisSpec {
+	return spectrumAnalysisSpec(DefaultSpectrumBands)
 }
 
 func (d *luaModeDriver) Render(v *Visualizer) string {
 	if v == nil || d.index < 0 || d.index >= len(v.luaVisNames) || v.luaRender == nil {
 		return ""
 	}
-	return v.luaRender(v.luaVisNames[d.index], luaBands(v.bands), v.Rows, panelWidth, v.frame)
+	return v.luaRender(v.luaVisNames[d.index], luaBands(v.bands), v.Rows, PanelWidth, v.frame)
 }
 
-func (d *luaModeDriver) Tick(v *Visualizer, ctx visTickContext) {
+func (d *luaModeDriver) Tick(v *Visualizer, ctx VisTickContext) {
 	defaultDriverTick(v, ctx, d.AnalysisSpec(v))
 }
 
-func (*luaModeDriver) TickInterval(_ *Visualizer, ctx visTickContext) time.Duration {
+func (*luaModeDriver) TickInterval(_ *Visualizer, ctx VisTickContext) time.Duration {
 	return defaultDriverTickInterval(ctx)
 }
 
@@ -680,8 +692,8 @@ func (*luaModeDriver) OnEnter(*Visualizer) {}
 
 func (*luaModeDriver) OnLeave(*Visualizer) {}
 
-func luaBands(src []float64) [defaultSpectrumBands]float64 {
-	var bands [defaultSpectrumBands]float64
+func luaBands(src []float64) [DefaultSpectrumBands]float64 {
+	var bands [DefaultSpectrumBands]float64
 	copy(bands[:], src)
 	return bands
 }
@@ -701,13 +713,13 @@ func (v *Visualizer) syncDriverMode() visModeDriver {
 	}
 	if v.activeMode != v.Mode {
 		prev := v.driverFor(v.activeMode)
-		prevSpec := visAnalysisSpec{}
+		prevSpec := VisAnalysisSpec{}
 		if prev != nil {
-			prevSpec = normalizeAnalysisSpec(prev.AnalysisSpec(v))
+			prevSpec = NormalizeAnalysisSpec(prev.AnalysisSpec(v))
 		}
-		nextSpec := visAnalysisSpec{}
+		nextSpec := VisAnalysisSpec{}
 		if driver != nil {
-			nextSpec = normalizeAnalysisSpec(driver.AnalysisSpec(v))
+			nextSpec = NormalizeAnalysisSpec(driver.AnalysisSpec(v))
 		}
 		if (prevSpec.BandCount == 0) != (nextSpec.BandCount == 0) {
 			v.resetSpectrumHistory()

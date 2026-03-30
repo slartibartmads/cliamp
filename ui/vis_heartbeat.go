@@ -11,7 +11,7 @@ import (
 func (v *Visualizer) renderHeartbeat() string {
 	height := v.Rows
 	dotRows := height * 4
-	dotCols := panelWidth * 2
+	dotCols := PanelWidth * 2
 
 	samples := v.waveBuf
 	n := len(samples)
@@ -68,7 +68,7 @@ func (v *Visualizer) renderHeartbeat() string {
 		var sb, run strings.Builder
 		tag := -1
 
-		for ch := range panelWidth {
+		for ch := range PanelWidth {
 			var braille rune = '\u2800'
 			hasTrace := false
 

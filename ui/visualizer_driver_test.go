@@ -14,8 +14,8 @@ func TestAnalyzeSupportsArbitraryBandCounts(t *testing.T) {
 		samples[i] = math.Sin(2 * math.Pi * 440 * float64(i) / v.sr)
 	}
 
-	for _, spec := range []visAnalysisSpec{
-		spectrumAnalysisSpec(defaultSpectrumBands),
+	for _, spec := range []VisAnalysisSpec{
+		spectrumAnalysisSpec(DefaultSpectrumBands),
 		{BandCount: 17, FFTSize: defaultFFTSize},
 		{BandCount: classicPeakSpectrumBands, FFTSize: classicPeakFFTSize},
 	} {
@@ -27,17 +27,17 @@ func TestAnalyzeSupportsArbitraryBandCounts(t *testing.T) {
 }
 
 func TestBuildSpectrumEdgesPreservesLegacyDefaultLayout(t *testing.T) {
-	got := buildSpectrumEdges(defaultSpectrumBands)
+	got := buildSpectrumEdges(DefaultSpectrumBands)
 	want := legacySpectrumEdges[:]
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("buildSpectrumEdges(%d) = %v, want %v", defaultSpectrumBands, got, want)
+		t.Fatalf("buildSpectrumEdges(%d) = %v, want %v", DefaultSpectrumBands, got, want)
 	}
 }
 
 func TestAnalyzeDecayStateIsIndependentPerAnalysisSpec(t *testing.T) {
 	v := NewVisualizer(44100)
-	specA := spectrumAnalysisSpec(defaultSpectrumBands)
-	specB := visAnalysisSpec{BandCount: defaultSpectrumBands, FFTSize: classicPeakFFTSize}
+	specA := spectrumAnalysisSpec(DefaultSpectrumBands)
+	specB := VisAnalysisSpec{BandCount: DefaultSpectrumBands, FFTSize: classicPeakFFTSize}
 	v.prevBySpec[specA] = uniformBandsN(specA.BandCount, 0.5)
 	v.prevBySpec[specB] = uniformBandsN(specB.BandCount, 0.8)
 
@@ -58,7 +58,7 @@ func TestAverageSpectrumRangeLinearDistinguishesSubBinLowBands(t *testing.T) {
 		magnitudes[i] = float64(i)
 	}
 
-	spec := visAnalysisSpec{BandCount: classicPeakSpectrumBands, FFTSize: classicPeakFFTSize}
+	spec := VisAnalysisSpec{BandCount: classicPeakSpectrumBands, FFTSize: classicPeakFFTSize}
 	edges := buildSpectrumEdges(spec.BandCount)
 	binHz := 44100.0 / float64(spec.FFTSize)
 	low := make([]float64, 3)
@@ -75,14 +75,14 @@ func TestRenderOnlyDriverUsesDefaultTickInterval(t *testing.T) {
 	v := NewVisualizer(44100)
 	activateMode(t, v, VisBars)
 
-	if got := v.TickInterval(visTickContext{Playing: true}); got != tickFast {
-		t.Fatalf("TickInterval(playing) = %v, want %v", got, tickFast)
+	if got := v.TickInterval(VisTickContext{Playing: true}); got != TickFast {
+		t.Fatalf("TickInterval(playing) = %v, want %v", got, TickFast)
 	}
-	if got := v.TickInterval(visTickContext{OverlayActive: true}); got != tickSlow {
-		t.Fatalf("TickInterval(overlay) = %v, want %v", got, tickSlow)
+	if got := v.TickInterval(VisTickContext{OverlayActive: true}); got != TickSlow {
+		t.Fatalf("TickInterval(overlay) = %v, want %v", got, TickSlow)
 	}
-	if got := v.TickInterval(visTickContext{}); got != tickSlow {
-		t.Fatalf("TickInterval(idle) = %v, want %v", got, tickSlow)
+	if got := v.TickInterval(VisTickContext{}); got != TickSlow {
+		t.Fatalf("TickInterval(idle) = %v, want %v", got, TickSlow)
 	}
 }
 
@@ -91,9 +91,9 @@ func TestRenderOnlyDriverSkipsAnalyzeUnderOverlay(t *testing.T) {
 	activateMode(t, v, VisBars)
 
 	calls := 0
-	v.Tick(visTickContext{
+	v.Tick(VisTickContext{
 		OverlayActive: true,
-		Analyze: func(visAnalysisSpec) []float64 {
+		Analyze: func(VisAnalysisSpec) []float64 {
 			calls++
 			return uniformBands(0.6)
 		},
@@ -108,20 +108,20 @@ func TestRenderOnlyDriverRequestsConfiguredBandCount(t *testing.T) {
 	v := NewVisualizer(44100)
 	activateMode(t, v, VisBars)
 
-	var requested visAnalysisSpec
-	v.Tick(visTickContext{
-		Analyze: func(spec visAnalysisSpec) []float64 {
+	var requested VisAnalysisSpec
+	v.Tick(VisTickContext{
+		Analyze: func(spec VisAnalysisSpec) []float64 {
 			requested = spec
 			return uniformBandsN(spec.BandCount, 0.6)
 		},
 	})
 
-	want := spectrumAnalysisSpec(defaultSpectrumBands)
+	want := spectrumAnalysisSpec(DefaultSpectrumBands)
 	if requested != want {
 		t.Fatalf("Analyze() requested %+v, want %+v", requested, want)
 	}
-	if len(v.bands) != defaultSpectrumBands {
-		t.Fatalf("stored bands len = %d, want %d", len(v.bands), defaultSpectrumBands)
+	if len(v.bands) != DefaultSpectrumBands {
+		t.Fatalf("stored bands len = %d, want %d", len(v.bands), DefaultSpectrumBands)
 	}
 }
 
@@ -129,17 +129,17 @@ func TestClassicPeakRequestsHighResBands(t *testing.T) {
 	v := NewVisualizer(44100)
 	activateMode(t, v, VisClassicPeak)
 
-	var requested visAnalysisSpec
-	v.Tick(visTickContext{
+	var requested VisAnalysisSpec
+	v.Tick(VisTickContext{
 		Now:     time.Now(),
 		Playing: true,
-		Analyze: func(spec visAnalysisSpec) []float64 {
+		Analyze: func(spec VisAnalysisSpec) []float64 {
 			requested = spec
 			return uniformBandsN(spec.BandCount, 0.6)
 		},
 	})
 
-	want := visAnalysisSpec{BandCount: classicPeakSpectrumBands, FFTSize: classicPeakFFTSize}
+	want := VisAnalysisSpec{BandCount: classicPeakSpectrumBands, FFTSize: classicPeakFFTSize}
 	if requested != want {
 		t.Fatalf("Analyze() requested %+v, want %+v", requested, want)
 	}
@@ -153,10 +153,10 @@ func TestRawSampleModesRefreshWaveBufAtZeroBandCount(t *testing.T) {
 	activateMode(t, v, VisWave)
 
 	samples := []float64{-0.5, -0.1, 0.25, 0.75}
-	requested := visAnalysisSpec{BandCount: -1, FFTSize: -1}
-	v.Tick(visTickContext{
+	requested := VisAnalysisSpec{BandCount: -1, FFTSize: -1}
+	v.Tick(VisTickContext{
 		Playing: true,
-		Analyze: func(spec visAnalysisSpec) []float64 {
+		Analyze: func(spec VisAnalysisSpec) []float64 {
 			requested = spec
 			return v.Analyze(samples, spec)
 		},
@@ -173,7 +173,7 @@ func TestRawSampleModesRefreshWaveBufAtZeroBandCount(t *testing.T) {
 
 func TestRawSampleModesClearSpectrumHistoryOnModeSwitch(t *testing.T) {
 	v := NewVisualizer(44100)
-	barsSpec := spectrumAnalysisSpec(defaultSpectrumBands)
+	barsSpec := spectrumAnalysisSpec(DefaultSpectrumBands)
 	v.prevBySpec[barsSpec] = uniformBandsN(barsSpec.BandCount, 0.8)
 
 	activateMode(t, v, VisBars)
@@ -199,10 +199,10 @@ func TestTerrainPreservesStateAcrossModeSwitch(t *testing.T) {
 	bands := uniformBands(0.6)
 	v.bands = bands
 
-	v.Tick(visTickContext{})
+	v.Tick(VisTickContext{})
 	snapshot := append([]float64(nil), driver.buf...)
-	if len(snapshot) != panelWidth*2 {
-		t.Fatalf("terrain buffer len = %d, want %d", len(snapshot), panelWidth*2)
+	if len(snapshot) != PanelWidth*2 {
+		t.Fatalf("terrain buffer len = %d, want %d", len(snapshot), PanelWidth*2)
 	}
 
 	activateMode(t, v, VisBars)
@@ -226,7 +226,7 @@ func TestTerrainRenderDoesNotAdvanceWithoutTick(t *testing.T) {
 	driver := terrainDriverFor(t, v)
 	v.bands = uniformBands(0.6)
 
-	v.Tick(visTickContext{})
+	v.Tick(VisTickContext{})
 	snapshot := append([]float64(nil), driver.buf...)
 
 	v.Render()
@@ -252,9 +252,9 @@ func TestTerrainTickSkipsAnalyzeUnderOverlay(t *testing.T) {
 	snapshot := append([]float64(nil), driver.buf...)
 
 	calls := 0
-	v.Tick(visTickContext{
+	v.Tick(VisTickContext{
 		OverlayActive: true,
-		Analyze: func(visAnalysisSpec) []float64 {
+		Analyze: func(VisAnalysisSpec) []float64 {
 			calls++
 			return uniformBands(0.6)
 		},

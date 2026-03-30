@@ -25,6 +25,7 @@ import (
 	"cliamp/resolve"
 	"cliamp/theme"
 	"cliamp/ui"
+	"cliamp/ui/model"
 	"cliamp/upgrade"
 )
 
@@ -40,8 +41,8 @@ func run(overrides config.Overrides, positional []string) error {
 
 	// Build provider list: Radio is always available, Navidrome and Spotify if configured.
 	radioProv := radio.New()
-	var providers []ui.ProviderEntry
-	providers = append(providers, ui.ProviderEntry{Key: "radio", Name: "Radio", Provider: radioProv})
+	var providers []model.ProviderEntry
+	providers = append(providers, model.ProviderEntry{Key: "radio", Name: "Radio", Provider: radioProv})
 
 	var navClient *navidrome.NavidromeClient
 	if c := navidrome.NewFromConfig(cfg.Navidrome); c != nil {
@@ -50,17 +51,17 @@ func run(overrides config.Overrides, positional []string) error {
 		navClient = c
 	}
 	if navClient != nil {
-		providers = append(providers, ui.ProviderEntry{Key: "navidrome", Name: "Navidrome", Provider: navClient})
+		providers = append(providers, model.ProviderEntry{Key: "navidrome", Name: "Navidrome", Provider: navClient})
 	}
 
 	if plexProv := plex.NewFromConfig(cfg.Plex); plexProv != nil {
-		providers = append(providers, ui.ProviderEntry{Key: "plex", Name: "Plex", Provider: plexProv})
+		providers = append(providers, model.ProviderEntry{Key: "plex", Name: "Plex", Provider: plexProv})
 	}
 
 	var spotifyProv *spotify.SpotifyProvider
 	if cfg.Spotify.IsSet() {
 		spotifyProv = spotify.New(nil, cfg.Spotify.ClientID)
-		providers = append(providers, ui.ProviderEntry{Key: "spotify", Name: "Spotify", Provider: spotifyProv})
+		providers = append(providers, model.ProviderEntry{Key: "spotify", Name: "Spotify", Provider: spotifyProv})
 	}
 
 	var ytProviders ytmusic.Providers
@@ -101,9 +102,9 @@ func run(overrides config.Overrides, positional []string) error {
 			if player.YTDLPAvailable() {
 				ytProviders = ytmusic.New(nil, ytClientID, ytClientSecret, cfg.YouTubeMusic.CookiesFrom != "")
 				providers = append(providers,
-					ui.ProviderEntry{Key: "yt", Name: "YouTube (All)", Provider: ytProviders.All},
-					ui.ProviderEntry{Key: "youtube", Name: "YouTube", Provider: ytProviders.Video},
-					ui.ProviderEntry{Key: "ytmusic", Name: "YouTube Music", Provider: ytProviders.Music},
+					model.ProviderEntry{Key: "yt", Name: "YouTube (All)", Provider: ytProviders.All},
+					model.ProviderEntry{Key: "youtube", Name: "YouTube", Provider: ytProviders.Video},
+					model.ProviderEntry{Key: "ytmusic", Name: "YouTube Music", Provider: ytProviders.Music},
 				)
 			}
 		}
@@ -198,7 +199,7 @@ func run(overrides config.Overrides, positional []string) error {
 		defer luaMgr.Close()
 	}
 
-	m := ui.NewModel(p, pl, providers, defaultProvider, localProv, themes, cfg.Navidrome.BrowseSort, luaMgr)
+	m := model.New(p, pl, providers, defaultProvider, localProv, themes, cfg.Navidrome.BrowseSort, luaMgr)
 
 	// Wire Lua plugin state provider with read-only access to player/playlist.
 	if luaMgr != nil {
@@ -268,7 +269,7 @@ func run(overrides config.Overrides, positional []string) error {
 	}
 
 	prog := tea.NewProgram(m, tea.WithAltScreen())
-	prog.SetWindowTitle(ui.InitialTerminalTitle())
+	prog.SetWindowTitle(model.InitialTerminalTitle())
 
 	// Wire Lua plugin control provider (needs prog.Send for next/prev).
 	if luaMgr != nil {
@@ -283,7 +284,7 @@ func run(overrides config.Overrides, positional []string) error {
 				_ = p.Seek(time.Duration(secs * float64(time.Second)))
 			},
 			SetEQPreset: func(name string, bands *[10]float64) {
-				prog.Send(ui.SetEQPresetMsg{Name: name, Bands: bands})
+				prog.Send(model.SetEQPresetMsg{Name: name, Bands: bands})
 			},
 			Next:         func() { prog.Send(mpris.NextMsg{}) },
 			Prev:         func() { prog.Send(mpris.PrevMsg{}) },
@@ -301,7 +302,7 @@ func run(overrides config.Overrides, positional []string) error {
 	}
 
 	// Persist theme selection and resume state across restarts.
-	if fm, ok := finalModel.(ui.Model); ok {
+	if fm, ok := finalModel.(model.Model); ok {
 		themeName := fm.ThemeName()
 		if themeName == theme.DefaultName {
 			themeName = ""

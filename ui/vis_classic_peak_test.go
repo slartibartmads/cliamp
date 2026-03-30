@@ -14,15 +14,15 @@ const classicPeakTestEpsilon = 1e-9
 
 func withPanelWidth(t *testing.T, width int) {
 	t.Helper()
-	prevWidth := panelWidth
-	panelWidth = width
+	prevWidth := PanelWidth
+	PanelWidth = width
 	t.Cleanup(func() {
-		panelWidth = prevWidth
+		PanelWidth = prevWidth
 	})
 }
 
 func uniformBands(level float64) []float64 {
-	return uniformBandsN(defaultSpectrumBands, level)
+	return uniformBandsN(DefaultSpectrumBands, level)
 }
 
 func uniformBandsN(count int, level float64) []float64 {
@@ -85,7 +85,7 @@ func TestClassicPeakModeLookup(t *testing.T) {
 func TestVisualizerFrameAdvancesOnTickNotRender(t *testing.T) {
 	v := NewVisualizer(44100)
 
-	v.Analyze(make([]float64, defaultFFTSize), spectrumAnalysisSpec(defaultSpectrumBands))
+	v.Analyze(make([]float64, defaultFFTSize), spectrumAnalysisSpec(DefaultSpectrumBands))
 	if v.frame != 0 {
 		t.Fatalf("Analyze() advanced frame to %d, want 0 before tick", v.frame)
 	}
@@ -96,7 +96,7 @@ func TestVisualizerFrameAdvancesOnTickNotRender(t *testing.T) {
 		t.Fatalf("Render() advanced frame to %d, want 0 before tick", v.frame)
 	}
 
-	v.Tick(visTickContext{})
+	v.Tick(VisTickContext{})
 	if v.frame != 1 {
 		t.Fatalf("Tick() advanced frame to %d, want 1", v.frame)
 	}
@@ -110,7 +110,7 @@ func TestVisualizerFrameAdvancesOnTickNotRender(t *testing.T) {
 
 func TestClassicPeakLaunchAndSettle(t *testing.T) {
 	withPanelWidth(t, 8)
-	cols := classicPeakColsForWidth(panelWidth)
+	cols := classicPeakColsForWidth(PanelWidth)
 
 	v := NewVisualizer(44100)
 	activateMode(t, v, VisClassicPeak)
@@ -287,7 +287,7 @@ func TestClassicPeakDoesNotRelaunchWhileAirborne(t *testing.T) {
 
 func TestClassicPeakResetsOnModeSwitchAndWidthChange(t *testing.T) {
 	withPanelWidth(t, 6)
-	cols6 := classicPeakColsForWidth(panelWidth)
+	cols6 := classicPeakColsForWidth(PanelWidth)
 
 	v := NewVisualizer(44100)
 	activateMode(t, v, VisClassicPeak)
@@ -325,8 +325,8 @@ func TestClassicPeakResetsOnModeSwitchAndWidthChange(t *testing.T) {
 		}
 	}
 
-	panelWidth = 8
-	cols8 := classicPeakColsForWidth(panelWidth)
+	PanelWidth = 8
+	cols8 := classicPeakColsForWidth(PanelWidth)
 	driver.sync(v)
 	if len(driver.barPos) != cols8 {
 		t.Fatalf("resize bar len = %d, want %d", len(driver.barPos), cols8)
@@ -359,9 +359,9 @@ func TestClassicPeakAnimatingWhenCapIsAboveBar(t *testing.T) {
 	activateMode(t, v, VisClassicPeak)
 	driver := classicPeakDriverFor(t, v)
 	v.bands = uniformBands(0.3)
-	driver.barPos = repeatedClassicPeakSlice(panelWidth, 0.3)
-	driver.peakPos = repeatedClassicPeakSlice(panelWidth, 0.5)
-	driver.peakVel = repeatedClassicPeakSlice(panelWidth, 0)
+	driver.barPos = repeatedClassicPeakSlice(PanelWidth, 0.3)
+	driver.peakPos = repeatedClassicPeakSlice(PanelWidth, 0.5)
+	driver.peakVel = repeatedClassicPeakSlice(PanelWidth, 0)
 
 	if !driver.animating(v) {
 		t.Fatal("animating() = false, want true when caps are still above the bar")
@@ -375,9 +375,9 @@ func TestClassicPeakAnimatingWhenBarsAreSettling(t *testing.T) {
 	activateMode(t, v, VisClassicPeak)
 	driver := classicPeakDriverFor(t, v)
 	v.bands = uniformBands(0.7)
-	driver.barPos = repeatedClassicPeakSlice(panelWidth, 0.5)
-	driver.peakPos = repeatedClassicPeakSlice(panelWidth, 0.5)
-	driver.peakVel = repeatedClassicPeakSlice(panelWidth, 0)
+	driver.barPos = repeatedClassicPeakSlice(PanelWidth, 0.5)
+	driver.peakPos = repeatedClassicPeakSlice(PanelWidth, 0.5)
+	driver.peakVel = repeatedClassicPeakSlice(PanelWidth, 0)
 
 	if !driver.animating(v) {
 		t.Fatal("animating() = false, want true while bars are still easing to target")
@@ -432,9 +432,9 @@ func TestClassicPeakRenderShowsAttachedCapWhileSettling(t *testing.T) {
 	driver := classicPeakDriverFor(t, v)
 	v.Rows = 5
 	v.bands = uniformBands(0.61)
-	driver.barPos = repeatedClassicPeakSlice(panelWidth, 0.61)
-	driver.peakPos = repeatedClassicPeakSlice(panelWidth, 0.68)
-	driver.peakVel = repeatedClassicPeakSlice(panelWidth, 0)
+	driver.barPos = repeatedClassicPeakSlice(PanelWidth, 0.61)
+	driver.peakPos = repeatedClassicPeakSlice(PanelWidth, 0.68)
+	driver.peakVel = repeatedClassicPeakSlice(PanelWidth, 0)
 
 	out := v.Render()
 	if !strings.ContainsAny(out, classicPeakTestGlyphs) {
@@ -450,17 +450,17 @@ func TestClassicPeakPauseFreezesStateAndClearsAnimationClock(t *testing.T) {
 	driver := classicPeakDriverFor(t, v)
 	v.Rows = 5
 	v.bands = uniformBands(0.6)
-	driver.barPos = repeatedClassicPeakSlice(panelWidth, 0.6)
-	driver.peakPos = repeatedClassicPeakSlice(panelWidth, 0.82)
-	driver.peakVel = repeatedClassicPeakSlice(panelWidth, 1.1)
-	driver.peakHold = repeatedClassicPeakSlice(panelWidth, classicPeakApexHold)
+	driver.barPos = repeatedClassicPeakSlice(PanelWidth, 0.6)
+	driver.peakPos = repeatedClassicPeakSlice(PanelWidth, 0.82)
+	driver.peakVel = repeatedClassicPeakSlice(PanelWidth, 1.1)
+	driver.peakHold = repeatedClassicPeakSlice(PanelWidth, classicPeakApexHold)
 
 	snapshotPeak := append([]float64(nil), driver.peakPos...)
 	snapshotVel := append([]float64(nil), driver.peakVel...)
 	snapshotHold := append([]float64(nil), driver.peakHold...)
 
 	driver.lastTick = time.Now()
-	driver.Tick(v, visTickContext{Now: time.Now(), Paused: true})
+	driver.Tick(v, VisTickContext{Now: time.Now(), Paused: true})
 
 	if !driver.lastTick.IsZero() {
 		t.Fatalf("lastTick after pause = %v, want zero", driver.lastTick)
@@ -479,8 +479,8 @@ func TestClassicPeakPauseFreezesStateAndClearsAnimationClock(t *testing.T) {
 	if !driver.animating(v) {
 		t.Fatal("animating() = false, want true while caps still airborne")
 	}
-	if got := v.TickInterval(visTickContext{Paused: true}); got != tickSlow {
-		t.Fatalf("TickInterval(paused) = %v, want %v", got, tickSlow)
+	if got := v.TickInterval(VisTickContext{Paused: true}); got != TickSlow {
+		t.Fatalf("TickInterval(paused) = %v, want %v", got, TickSlow)
 	}
 }
 
@@ -492,17 +492,17 @@ func TestClassicPeakOverlayFreezesStateAndClearsAnimationClock(t *testing.T) {
 	driver := classicPeakDriverFor(t, v)
 	v.Rows = 5
 	v.bands = uniformBands(0.6)
-	driver.barPos = repeatedClassicPeakSlice(panelWidth, 0.6)
-	driver.peakPos = repeatedClassicPeakSlice(panelWidth, 0.82)
-	driver.peakVel = repeatedClassicPeakSlice(panelWidth, 1.1)
-	driver.peakHold = repeatedClassicPeakSlice(panelWidth, classicPeakApexHold)
+	driver.barPos = repeatedClassicPeakSlice(PanelWidth, 0.6)
+	driver.peakPos = repeatedClassicPeakSlice(PanelWidth, 0.82)
+	driver.peakVel = repeatedClassicPeakSlice(PanelWidth, 1.1)
+	driver.peakHold = repeatedClassicPeakSlice(PanelWidth, classicPeakApexHold)
 
 	snapshotPeak := append([]float64(nil), driver.peakPos...)
 	snapshotVel := append([]float64(nil), driver.peakVel...)
 	snapshotHold := append([]float64(nil), driver.peakHold...)
 
 	driver.lastTick = time.Now()
-	driver.Tick(v, visTickContext{Now: time.Now(), OverlayActive: true})
+	driver.Tick(v, VisTickContext{Now: time.Now(), OverlayActive: true})
 
 	if !driver.lastTick.IsZero() {
 		t.Fatalf("lastTick after overlay = %v, want zero", driver.lastTick)
@@ -521,8 +521,8 @@ func TestClassicPeakOverlayFreezesStateAndClearsAnimationClock(t *testing.T) {
 	if !driver.animating(v) {
 		t.Fatal("animating() = false, want true while overlay hides airborne caps")
 	}
-	if got := v.TickInterval(visTickContext{OverlayActive: true}); got != tickSlow {
-		t.Fatalf("TickInterval(overlay) = %v, want %v", got, tickSlow)
+	if got := v.TickInterval(VisTickContext{OverlayActive: true}); got != TickSlow {
+		t.Fatalf("TickInterval(overlay) = %v, want %v", got, TickSlow)
 	}
 }
 
@@ -536,8 +536,8 @@ func TestClassicPeakRenderFillsEvenWidthPanels(t *testing.T) {
 
 	out := v.Render()
 	for _, line := range strings.Split(out, "\n") {
-		if got := lipgloss.Width(line); got != panelWidth {
-			t.Fatalf("Render() line width = %d, want %d for even panel width: %q", got, panelWidth, line)
+		if got := lipgloss.Width(line); got != PanelWidth {
+			t.Fatalf("Render() line width = %d, want %d for even panel width: %q", got, PanelWidth, line)
 		}
 	}
 }

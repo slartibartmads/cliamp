@@ -11,7 +11,7 @@ import (
 func (v *Visualizer) renderLightning(bands []float64) string {
 	height := v.Rows
 	dotRows := height * 4
-	dotCols := panelWidth * 2
+	dotCols := PanelWidth * 2
 	bandCount := len(bands)
 
 	grid := make([]bool, dotRows*dotCols)
@@ -101,7 +101,7 @@ func (v *Visualizer) renderLightning(bands []float64) string {
 	lines := make([]string, height)
 	for row := range height {
 		var content strings.Builder
-		for ch := range panelWidth {
+		for ch := range PanelWidth {
 			var braille rune = '\u2800'
 			for dr := range 4 {
 				for dc := range 2 {

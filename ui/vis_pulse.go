@@ -14,7 +14,7 @@ import (
 func (v *Visualizer) renderPulse(bands []float64) string {
 	height := v.Rows
 	dotRows := height * 4
-	dotCols := panelWidth * 2
+	dotCols := PanelWidth * 2
 	bandCount := len(bands)
 
 	centerX := float64(dotCols) / 2.0
@@ -44,7 +44,7 @@ func (v *Visualizer) renderPulse(bands []float64) string {
 		var sb, run strings.Builder
 		tag := -1
 
-		for c := range panelWidth {
+		for c := range PanelWidth {
 			var braille rune = '\u2800'
 			var maxNorm float64
 

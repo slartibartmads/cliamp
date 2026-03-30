@@ -63,8 +63,8 @@ func newClassicPeakDriver() visModeDriver {
 	return &classicPeakDriver{}
 }
 
-func (*classicPeakDriver) AnalysisSpec(*Visualizer) visAnalysisSpec {
-	return visAnalysisSpec{
+func (*classicPeakDriver) AnalysisSpec(*Visualizer) VisAnalysisSpec {
+	return VisAnalysisSpec{
 		BandCount: classicPeakSpectrumBands,
 		FFTSize:   classicPeakFFTSize,
 	}
@@ -73,7 +73,7 @@ func (*classicPeakDriver) AnalysisSpec(*Visualizer) visAnalysisSpec {
 func (d *classicPeakDriver) Render(v *Visualizer) string {
 	height := v.Rows
 	cols, peaks := d.renderState(v)
-	rowPad := max(0, panelWidth-classicPeakRenderWidth(len(cols)))
+	rowPad := max(0, PanelWidth-classicPeakRenderWidth(len(cols)))
 
 	lines := make([]string, height)
 	for row := range height {
@@ -104,7 +104,7 @@ func (d *classicPeakDriver) Render(v *Visualizer) string {
 	return strings.Join(lines, "\n")
 }
 
-func (d *classicPeakDriver) Tick(v *Visualizer, ctx visTickContext) {
+func (d *classicPeakDriver) Tick(v *Visualizer, ctx VisTickContext) {
 	if ctx.OverlayActive || ctx.Paused {
 		d.bandsAt = time.Time{}
 		d.lastTick = time.Time{}
@@ -127,14 +127,14 @@ func (d *classicPeakDriver) Tick(v *Visualizer, ctx visTickContext) {
 	}
 }
 
-func (d *classicPeakDriver) TickInterval(v *Visualizer, ctx visTickContext) time.Duration {
+func (d *classicPeakDriver) TickInterval(v *Visualizer, ctx VisTickContext) time.Duration {
 	if ctx.OverlayActive || ctx.Paused {
-		return tickSlow
+		return TickSlow
 	}
 	if ctx.Playing || d.animating(v) {
 		return d.frameInterval(v)
 	}
-	return tickSlow
+	return TickSlow
 }
 
 func (d *classicPeakDriver) OnEnter(*Visualizer) {
@@ -158,12 +158,12 @@ func (d *classicPeakDriver) animating(v *Visualizer) bool {
 }
 
 func (d *classicPeakDriver) levels(v *Visualizer) []float64 {
-	activeCols := classicPeakColsForWidth(panelWidth)
+	activeCols := classicPeakColsForWidth(PanelWidth)
 	return resampleBandsLinear(v.bands, activeCols)
 }
 
 func (d *classicPeakDriver) frameInterval(v *Visualizer) time.Duration {
-	rows := defaultVisRows
+	rows := DefaultVisRows
 	if v != nil && v.Rows > rows {
 		rows = v.Rows
 	}
