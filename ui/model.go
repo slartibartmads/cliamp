@@ -418,13 +418,6 @@ func (m Model) isOverlayActive() bool {
 	return m.activeScreen().hidesVisualizer()
 }
 
-func tickIntervalForState(introActive, visualizerVisible, playing, paused bool) time.Duration {
-	if introActive || (visualizerVisible && playing && !paused) {
-		return tickFast
-	}
-	return tickSlow
-}
-
 func (m Model) isPlaying() bool {
 	return m.player != nil && m.player.IsPlaying()
 }

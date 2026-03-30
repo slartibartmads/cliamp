@@ -16,8 +16,8 @@ func TestTerminalTitleValuesForTrack(t *testing.T) {
 			false,
 		)
 
-		if values.state != "playing" || values.stateIcon != "▶" {
-			t.Fatalf("state = %q/%q, want playing/▶", values.state, values.stateIcon)
+		if values.stateIcon != "▶" {
+			t.Fatalf("stateIcon = %q, want ▶", values.stateIcon)
 		}
 		if values.title != "Song" || values.artist != "Artist" {
 			t.Fatalf("parsed values = title %q artist %q", values.title, values.artist)
@@ -54,8 +54,8 @@ func TestTerminalTitleValuesForTrack(t *testing.T) {
 			false,
 		)
 
-		if values.state != "stopped" {
-			t.Fatalf("state = %q, want stopped", values.state)
+		if values.stateIcon != "" {
+			t.Fatalf("stateIcon = %q, want empty for stopped", values.stateIcon)
 		}
 		if values.metadata != "" || values.title != "" || values.artist != "" || values.path != "" {
 			t.Fatalf("stopped values should be empty, got %+v", values)
@@ -133,7 +133,6 @@ func TestCurrentTerminalTitleSanitizesRenderedTitle(t *testing.T) {
 		{
 			name: "drops control bytes",
 			values: terminalTitleValues{
-				state:     "playing",
 				stateIcon: "▶",
 				metadata:  "Song\a\x1b[31m - Artist\r\nName",
 			},

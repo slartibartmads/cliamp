@@ -19,7 +19,6 @@ const (
 )
 
 type terminalTitleValues struct {
-	state       string
 	stateIcon   string
 	metadata    string
 	title       string
@@ -170,13 +169,9 @@ func terminalTitleStateValues(playing, paused bool) terminalTitleValues {
 	values := terminalTitleValues{}
 	switch {
 	case playing && !paused:
-		values.state = "playing"
 		values.stateIcon = "▶"
 	case paused:
-		values.state = "paused"
 		values.stateIcon = "⏸"
-	default:
-		values.state = "stopped"
 	}
 	return values
 }
