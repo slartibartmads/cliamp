@@ -289,8 +289,9 @@ func (m Model) renderHeaderBlock() string {
 
 	if m.vis.Mode != VisNone {
 		n := m.player.SamplesInto(m.vis.sampleBuf)
-		bands := m.vis.Analyze(m.vis.sampleBuf[:n])
-		visOut := m.vis.Render(bands)
+		spec := m.vis.syncDriverMode().AnalysisSpec(m.vis)
+		m.vis.Analyze(m.vis.sampleBuf[:n], spec)
+		visOut := m.vis.Render()
 		// When album art shrinks the column, truncate visualizer lines to leftW.
 		for _, vl := range strings.Split(visOut, "\n") {
 			if lipgloss.Width(vl) > leftW {
@@ -332,12 +333,13 @@ func (m Model) renderHeaderBlock() string {
 // with minimal track info and a seek bar.
 func (m Model) renderFullVisualizer() string {
 	n := m.player.SamplesInto(m.vis.sampleBuf)
-	bands := m.vis.Analyze(m.vis.sampleBuf[:n])
+	spec := m.vis.syncDriverMode().AnalysisSpec(m.vis)
+	m.vis.Analyze(m.vis.sampleBuf[:n], spec)
 	sections := []string{
 		m.renderTrackInfo(panelWidth),
 		m.renderTimeStatus(panelWidth),
 		"",
-		m.vis.Render(bands),
+		m.vis.Render(),
 		"",
 		m.renderSeekBar(panelWidth),
 		"",
@@ -586,7 +588,7 @@ func (m Model) renderProviderList() string {
 	}
 
 	// Loading indicator for catalog batch.
-	if isRadio && m.radioBatch.loading {
+	if isRadio && m.radioCatalog.loading {
 		lines = append(lines, dimStyle.Render("  Loading more stations..."))
 	}
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"cliamp/external/navidrome"
+	"cliamp/external/radio"
 	"cliamp/lyrics"
 	"cliamp/playlist"
 )
@@ -138,9 +139,22 @@ type spotSearchState struct {
 	cursor    int
 	loading   bool
 	playlists []playlist.PlaylistInfo // user's Spotify playlists for picker
-	selTrack  playlist.Track         // track selected to add
-	newName   string                 // new playlist name input
+	selTrack  playlist.Track          // track selected to add
+	newName   string                  // new playlist name input
 	err       string
+}
+
+// radioCatalogState holds state for the radio catalog overlay.
+type radioCatalogState struct {
+	visible   bool
+	loading   bool
+	favorites *radio.Favorites
+	err       string
+	stations  []radio.CatalogStation
+	cursor    int
+	scroll    int
+	offset    int  // next offset for batch loading
+	done      bool // true when all stations loaded
 }
 
 // radioBatchState holds state for lazy-loading catalog stations from the Radio Browser API.
@@ -228,6 +242,7 @@ func (s *statusMsg) Clear() {
 type networkStats struct {
 	speed     float64 // bytes per second (smoothed)
 	lastBytes int64
+	lastTick  int // tick counter for periodic sampling
 	sampleFor time.Duration
 }
 

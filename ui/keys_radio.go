@@ -13,15 +13,15 @@ func (m *Model) maybeLoadRadioBatch() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	if m.radioBatch.loading || m.radioBatch.done {
+	if m.radioCatalog.loading || m.radioCatalog.done {
 		return nil
 	}
 	if rp.IsSearching() {
 		return nil
 	}
 	if m.provCursor >= len(m.providerLists)-10 {
-		m.radioBatch.loading = true
-		return fetchRadioBatchCmd(m.radioBatch.offset, radioBatchSize)
+		m.radioCatalog.loading = true
+		return fetchRadioBatchCmd(m.radioCatalog.offset, radioBatchSize)
 	}
 	return nil
 }

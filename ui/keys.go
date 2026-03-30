@@ -158,11 +158,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	}
 
 	// Let the active header plugin claim keys before global bindings.
-	if kh, ok := m.headerPlugin.(KeyHandler); ok {
+	if kh, ok := m.provisionalPlugin.(ProvisionalKeyHandler); ok {
 		if handled, status := kh.HandleKey(msg.String()); handled {
 			if status != "" {
-				m.status.text = status
-				m.status.ttl = statusTTLShort
+				m.status.Show(status, statusTTLShort)
 			}
 			return nil
 		}
@@ -353,7 +352,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		if m.focus == focusEQ {
 			bands := m.player.EQBands()
 			m.player.SetEQBand(m.eqCursor, bands[m.eqCursor]+1)
-			m.eqPresetIdx = -1  // manual tweak → custom
+			m.eqPresetIdx = -1 // manual tweak → custom
 			m.eqCustomLabel = ""
 			m.saveEQ()
 		} else {
@@ -370,7 +369,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		if m.focus == focusEQ {
 			bands := m.player.EQBands()
 			m.player.SetEQBand(m.eqCursor, bands[m.eqCursor]-1)
-			m.eqPresetIdx = -1  // manual tweak → custom
+			m.eqPresetIdx = -1 // manual tweak → custom
 			m.eqCustomLabel = ""
 			m.saveEQ()
 		} else {
@@ -821,8 +820,8 @@ func (m *Model) toggleExpandPlaylist() {
 	defVis := m.defaultPlVisible()
 	if m.plVisible <= defVis {
 		probe := strings.Join([]string{
-			m.renderTitle(), m.renderTrackInfo(), m.renderTimeStatus(), "",
-			m.renderSpectrum(), m.renderSeekBar(), "",
+			m.renderHeaderBlock(),
+			"",
 			m.renderControls(), "", m.renderPlaylistHeader(),
 			"x", "", m.renderHelp(), m.renderBottomStatus(),
 		}, "\n")

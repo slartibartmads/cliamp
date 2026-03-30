@@ -38,6 +38,7 @@ type AlbumArt struct {
 	lastArtCols int
 	lastHeight  int
 	lastMode    CoverArtMode
+	bitmapSent  bool // true after the current bitmap has been transmitted (bitmap mode only)
 
 	// Theme extraction — from a small thumbnail (averages out anti-aliasing)
 	themeThumb   *image.RGBA // 32x32 thumbnail for theme extraction
@@ -54,30 +55,33 @@ type AlbumArt struct {
 // OnTick implements ProvisionalPlugin. Detects track changes and kicks off fetches.
 func (a *AlbumArt) OnTick(track playlist.Track) tea.Cmd {
 
-	// Detect track change and clear cached art.
+	// Detect track change.
 	if track.Path != a.path {
 		a.path = track.Path
-		a.scaled = nil // force rescale on next Render
-		a.image = nil
 
 		newKey := track.CoverArtURL
 		if newKey == "" && len(track.CoverArt) > 0 {
 			newKey = fmt.Sprintf("embedded:%d", len(track.CoverArt))
 		}
 
-		if newKey == "" || newKey != a.key {
+		if newKey != a.key {
+			// Art changed: clear everything so it is re-decoded/re-fetched.
 			a.key = newKey
+			a.image = nil
+			a.scaled = nil
 			a.fetching = false
 			if len(track.CoverArt) > 0 {
 				a.image = decodeCoverArt(track.CoverArt)
 			}
 		}
+		// Same art key (e.g. next track in same album): preserve a.image and
+		// a.scaled so the bitmap stays on screen without any retransmit.
 	}
 
 	// Kick off an async fetch if needed.
 	if a.image == nil && !a.fetching && track.CoverArtURL != "" && track.Path == a.path {
 		a.fetching = true
-		return fetchCoverArtCmd(track.Path, track.CoverArtURL)
+		return fetchCoverArtCmd(track.Path, a.key, track.CoverArtURL)
 	}
 	return nil
 }
@@ -88,11 +92,13 @@ func (a *AlbumArt) OnMsg(msg tea.Msg) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	if fetched.path == a.path {
-		a.image = fetched.img
-		a.scaled = nil // force rescale on next Render
-		a.fetching = false
+	// Discard results from stale fetches (track or art changed since fetch started).
+	if fetched.path != a.path || fetched.key != a.key {
+		return nil
 	}
+	a.image = fetched.img
+	a.scaled = nil // force rescale on next Render
+	a.fetching = false
 	return nil
 }
 
@@ -125,6 +131,7 @@ func (a *AlbumArt) RenderHeader(height int) (string, int) {
 	if rescaled {
 		w, h := coverArtPixelSize(a.Mode, artCols, height)
 		a.scaled = scaleImage(a.image, w, h)
+		a.bitmapSent = false
 		// Extract theme from a small thumbnail (averages out anti-aliasing).
 		// Only re-extract when the source image changed (tracked by a.key).
 		if a.key != a.lastThemeKey {
@@ -147,7 +154,8 @@ func (a *AlbumArt) RenderHeader(height int) (string, int) {
 	a.curV = lerp(a.curV, a.tgtV, t)
 	applyTheme(themeFromHSV(a.curH, a.curS, a.curV))
 
-	// Bitmap mode: always transmit fresh (simpler, confirm protocol works).
+	// Bitmap mode: retransmit on every render since Bubbletea redraws the
+	// entire screen each frame, which clears Kitty images from the terminal.
 	if a.Mode == CoverArtBitmap {
 		return renderBitmapTransmit(a.scaled, artCols, height), artCols
 	}
@@ -249,23 +257,25 @@ func (a *AlbumArt) CycleMode() string {
 // CoverArtFetchedMsg carries the result of an async cover art HTTP fetch.
 type CoverArtFetchedMsg struct {
 	path string // track path the fetch was initiated for
+	key  string // art source key the fetch was initiated for
 	img  image.Image
 }
 
 // fetchCoverArtCmd fetches cover art from artURL in a goroutine and returns a
-// CoverArtFetchedMsg. path is used to discard stale results if the track changes.
-func fetchCoverArtCmd(path, artURL string) tea.Cmd {
+// CoverArtFetchedMsg. path and key are used to discard stale results if the
+// track or art changes before the fetch completes.
+func fetchCoverArtCmd(path, key, artURL string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := http.Get(artURL) //nolint:noctx
 		if err != nil {
-			return CoverArtFetchedMsg{path: path}
+			return CoverArtFetchedMsg{path: path, key: key}
 		}
 		defer resp.Body.Close()
 		img, _, err := image.Decode(resp.Body)
 		if err != nil {
-			return CoverArtFetchedMsg{path: path}
+			return CoverArtFetchedMsg{path: path, key: key}
 		}
-		return CoverArtFetchedMsg{path: path, img: img}
+		return CoverArtFetchedMsg{path: path, key: key, img: img}
 	}
 }
 
